@@ -15,18 +15,18 @@
     --popover: 0 0% 100%;
     --popover-foreground: 215 25% 12%;
 
-    /* Professional logistics blue theme */
-    --primary: 213 94% 68%;
+    /* Professional gray theme */
+    --primary: 215 25% 27%;
     --primary-foreground: 0 0% 100%;
-    --primary-glow: 213 94% 78%;
+    --primary-glow: 215 25% 35%;
 
-    --secondary: 180 25% 95%;
-    --secondary-foreground: 215 25% 12%;
+    --secondary: 210 20% 95%;
+    --secondary-foreground: 215 25% 15%;
 
-    --muted: 215 20% 96%;
+    --muted: 210 20% 96%;
     --muted-foreground: 215 16% 47%;
 
-    --accent: 180 94% 45%;
+    --accent: 215 25% 22%;
     --accent-foreground: 0 0% 100%;
 
     --success: 142 76% 36%;
@@ -40,7 +40,7 @@
 
     --border: 215 20% 90%;
     --input: 215 20% 90%;
-    --ring: 213 94% 68%;
+    --ring: 215 25% 27%;
 
     --radius: 0.5rem;
 
