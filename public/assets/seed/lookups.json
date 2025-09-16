@@ -1,0 +1,27 @@
+{
+  "modes": [
+    { "value": "ROAD", "label_fa": "جاده‌ای", "label_en": "Road Transport" },
+    { "value": "RAIL", "label_fa": "ریلی", "label_en": "Rail Transport" },
+    { "value": "SEA", "label_fa": "دریایی", "label_en": "Sea Transport" },
+    { "value": "AIR", "label_fa": "هوایی", "label_en": "Air Transport" }
+  ],
+  "package_types": [
+    { "value": "BOX", "label_fa": "جعبه", "label_en": "Box" },
+    { "value": "PALLET", "label_fa": "پالت", "label_en": "Pallet" },
+    { "value": "BAG", "label_fa": "کیسه", "label_en": "Bag" },
+    { "value": "DRUM", "label_fa": "درام", "label_en": "Drum" },
+    { "value": "CONTAINER", "label_fa": "کانتینر", "label_en": "Container" },
+    { "value": "CRATE", "label_fa": "جعبه چوبی", "label_en": "Crate" },
+    { "value": "ROLL", "label_fa": "رول", "label_en": "Roll" }
+  ],
+  "request_statuses": [
+    { "value": "NEW", "label_fa": "جدید", "label_en": "New" },
+    { "value": "CONTACTED", "label_fa": "تماس گرفته شد", "label_en": "Contacted" },
+    { "value": "QUOTED", "label_fa": "قیمت اعلام شد", "label_en": "Quoted" },
+    { "value": "CONFIRMED", "label_fa": "تایید شد", "label_en": "Confirmed" },
+    { "value": "IN_TRANSIT", "label_fa": "در حال حمل", "label_en": "In Transit" },
+    { "value": "DELIVERED", "label_fa": "تحویل شد", "label_en": "Delivered" },
+    { "value": "CLOSED", "label_fa": "بسته شد", "label_en": "Closed" },
+    { "value": "CANCELLED", "label_fa": "لغو شد", "label_en": "Cancelled" }
+  ]
+}
