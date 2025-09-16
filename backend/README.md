@@ -3,7 +3,9 @@
 - اجرای لوکال:
   flask --app backend.app run
 - تست:
-  curl "http://127.0.0.1:5000/api/geo/provinces?q=تهران&limit=20"
+  curl http://127.0.0.1:5000/api/debug/geo-check
+  curl http://127.0.0.1:5000/api/geo/provinces
+  curl "http://127.0.0.1:5000/api/geo/provinces?q=تهران"
 
 نکات:
 - همهٔ پاسخ‌های خطا با ساختار JSON شامل فیلدهای `error` و `request_id` برمی‌گردند و در صورت نیاز جزئیات در `details` قرار می‌گیرد.

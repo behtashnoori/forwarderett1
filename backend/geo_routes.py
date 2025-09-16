@@ -9,11 +9,8 @@ geo_bp = Blueprint("geo", __name__)
 
 def _qpl():
     q = (request.args.get("q") or "").strip()
-    try:
-        page = max(1, int(request.args.get("page", 1)))
-        limit = min(1000, max(1, int(request.args.get("limit", 50))))
-    except ValueError:
-        page, limit = 1, 50
+    page = max(1, int(request.args.get("page", 1)))
+    limit = min(1000, max(1, int(request.args.get("limit", 50))))
     return q, page, limit
 
 
@@ -23,7 +20,7 @@ def provinces():
     stmt = select(Province.id, Province.name_fa)
     if q:
         stmt = stmt.where(Province.name_fa.ilike(f"%{q}%"))
-    stmt = stmt.order_by(Province.name_fa).limit(limit).offset((page - 1) * limit)
+    stmt = stmt.order_by(Province.id).limit(limit).offset((page - 1) * limit)
     rows = db.session.execute(stmt).all()
     return jsonify([{"id": r.id, "name_fa": r.name_fa} for r in rows])
 
