@@ -1,6 +1,6 @@
 import { ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { Truck, Settings, Users } from "lucide-react";
+import { Truck, Settings, Users, Info, Phone, HelpCircle, Briefcase } from "lucide-react";
 
 interface LayoutProps {
   children: ReactNode;
@@ -49,6 +49,50 @@ const Layout = ({ children }: LayoutProps) => {
                 <span>درخواست حمل</span>
               </Link>
               <Link
+                to="/services"
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-smooth ${
+                  isActive("/services")
+                    ? "bg-white/20 text-white"
+                    : "text-primary-glow hover:bg-white/10 hover:text-white"
+                }`}
+              >
+                <Briefcase size={20} />
+                <span>خدمات</span>
+              </Link>
+              <Link
+                to="/about"
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-smooth ${
+                  isActive("/about")
+                    ? "bg-white/20 text-white"
+                    : "text-primary-glow hover:bg-white/10 hover:text-white"
+                }`}
+              >
+                <Info size={20} />
+                <span>درباره ما</span>
+              </Link>
+              <Link
+                to="/faq"
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-smooth ${
+                  isActive("/faq")
+                    ? "bg-white/20 text-white"
+                    : "text-primary-glow hover:bg-white/10 hover:text-white"
+                }`}
+              >
+                <HelpCircle size={20} />
+                <span>سوالات متداول</span>
+              </Link>
+              <Link
+                to="/contact"
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-smooth ${
+                  isActive("/contact")
+                    ? "bg-white/20 text-white"
+                    : "text-primary-glow hover:bg-white/10 hover:text-white"
+                }`}
+              >
+                <Phone size={20} />
+                <span>تماس با ما</span>
+              </Link>
+              <Link
                 to="/agent"
                 className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-smooth ${
                   isActive("/agent")
@@ -57,7 +101,7 @@ const Layout = ({ children }: LayoutProps) => {
                 }`}
               >
                 <Users size={20} />
-                <span>داشبورد کارشناس</span>
+                <span>کارشناس</span>
               </Link>
               <Link
                 to="/admin"
