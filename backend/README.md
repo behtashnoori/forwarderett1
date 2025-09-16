@@ -1,5 +1,5 @@
 - venv را بساز و requirements نصب کن
-- فایل .env را از روی .env.example بساز و پسورد و SLA_HOURS را تنظیم کن
+- فایل .env را از روی .env.example بساز و مقدار `DATABASE_URL` را روی `postgresql+psycopg2://postgres:bagheri13@127.0.0.1:5432/forwarderett` و `SLA_HOURS` را تنظیم کن
 - اجرای لوکال:
   flask --app backend.app run
 - تست:
