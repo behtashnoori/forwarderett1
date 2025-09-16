@@ -3,21 +3,12 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-
-def _load_env_files() -> None:
-    """Load both project-level and backend-specific .env files if present."""
-
-    base_dir = Path(__file__).resolve().parent
-    root_env = base_dir.parent / ".env"
-    backend_env = base_dir / ".env"
-
-    if root_env.exists():
-        load_dotenv(root_env)
-    if backend_env.exists():
-        load_dotenv(backend_env, override=True)
-
-
-_load_env_files()
+root_env = Path(__file__).resolve().parents[1] / ".env"
+backend_env = Path(__file__).resolve().parent / ".env"
+if root_env.exists():
+    load_dotenv(root_env)
+if backend_env.exists():
+    load_dotenv(backend_env, override=True)
 
 SLA_HOURS = int(getenv("SLA_HOURS", "2"))
 
@@ -27,3 +18,4 @@ class Config:
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_ENGINE_OPTIONS = {"pool_pre_ping": True}
     CORS_ORIGIN = getenv("CORS_ORIGIN", "http://localhost:5173")
+    SLA_HOURS = SLA_HOURS
