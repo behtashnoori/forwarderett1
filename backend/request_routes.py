@@ -20,19 +20,19 @@ req_bp = Blueprint("req", __name__)
 
 _SHIPMENT_OPTIONAL_COLUMNS: dict[str, str] = {
     "ready_date": "DATE",
-    "mode_shipment_mode": "TEXT",
+    "mode_shipment_mode": "BIGINT",
     "incoterm_code": "TEXT",
     "is_hazardous": "BOOLEAN",
     "is_refrigerated": "BOOLEAN",
     "commodity_name": "TEXT",
     "hs_code": "TEXT",
-    "package_type": "TEXT",
+    "package_type": "BIGINT",
     "units": "INTEGER",
     "length_cm": "NUMERIC(10, 2)",
     "width_cm": "NUMERIC(10, 2)",
     "height_cm": "NUMERIC(10, 2)",
     "weight_kg": "NUMERIC(10, 2)",
-    "volume_m3": "NUMERIC(10, 2)",
+    "volume_m3": "NUMERIC(12, 3)",
     "contact_name": "TEXT",
     "contact_phone": "TEXT",
     "contact_email": "TEXT",
@@ -77,7 +77,6 @@ def _incoterm_by_code(code: str) -> dict[str, object] | None:
 
 
 
-@req_bp.before_app_first_request
 def _ensure_optional_columns() -> None:
     """Ensure optional shipment_request columns exist for older databases."""
 
@@ -109,6 +108,15 @@ def _ensure_optional_columns() -> None:
         )
     else:
         _columns_checked = True
+
+
+def _register_optional_columns(setup_state) -> None:
+    app = setup_state.app
+    with app.app_context():
+        _ensure_optional_columns()
+
+
+req_bp.record_once(_register_optional_columns)
 
 
 
@@ -400,7 +408,7 @@ def submit_shipment_request():
     shipment.dest_province_id = location_ids.get("dest_province_id")
     shipment.dest_county_id = location_ids.get("dest_county_id")
     shipment.dest_city_id = location_ids.get("dest_city_id")
-    shipment.mode_shipment_mode = str(mode_row["id"]) if mode_row else None
+    shipment.mode_shipment_mode = mode_row["id"] if mode_row else None
     shipment.incoterm_code = (
         incoterm_row["code"].upper() if incoterm_row else None
     )
@@ -410,7 +418,7 @@ def submit_shipment_request():
     )
     shipment.commodity_name = commodity_name
     shipment.hs_code = hs_code_value
-    shipment.package_type = str(package_row["id"]) if package_row else None
+    shipment.package_type = package_row["id"] if package_row else None
     shipment.units = units
     shipment.length_cm = length_cm
     shipment.width_cm = width_cm

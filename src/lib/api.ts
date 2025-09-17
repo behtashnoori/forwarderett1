@@ -173,13 +173,13 @@ export type ShipmentRequestDetails = {
   };
   note_text: string | null;
   goods: {
-    mode_shipment_mode: string | null;
+    mode_shipment_mode: number | null;
     incoterm_code: string | null;
     is_hazardous: boolean | null;
     is_refrigerated: boolean | null;
     commodity_name: string | null;
     hs_code: string | null;
-    package_type: string | null;
+    package_type: number | null;
     units: number | null;
     length_cm: number | null;
     width_cm: number | null;
