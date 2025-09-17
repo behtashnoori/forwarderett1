@@ -7,7 +7,7 @@
 1. فایل `.env` را از روی `.env.example` بسازید (می‌توانید در ریشه یا داخل `backend/` ایجاد کنید؛ در صورت وجود نسخهٔ داخل `backend/` اولویت دارد):
 
    ```env
-   DATABASE_URL=postgresql+psycopg2://postgres:bagheri13@127.0.0.1:5432/forwarderett
+   DATABASE_URL=postgresql+psycopg2://postgres:bagheri13@127.0.0.1:5432/forwarder_db
    # مثال‌ها:
    # CORS_ORIGIN=http://localhost:5173
    # CORS_ORIGIN=http://localhost:8084,http://localhost:5173

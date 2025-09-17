@@ -15,7 +15,7 @@
 یک فایل `.env` در پوشهٔ `backend/` (یا ریشهٔ ریپو) بسازید و مقادیر زیر را قرار دهید:
 
 ```env
-DATABASE_URL=postgresql+psycopg2://postgres:bagheri13@127.0.0.1:5432/forwarderett
+DATABASE_URL=postgresql+psycopg2://postgres:bagheri13@127.0.0.1:5432/forwarder_db
 CORS_ORIGIN=http://localhost:5173
 SLA_HOURS=2
 ```
