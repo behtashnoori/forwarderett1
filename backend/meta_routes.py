@@ -113,11 +113,38 @@ def validate_shipment_draft():
 
     units = _parse_int(payload.get("units"), 1, 999_999, "units", errors)
 
-    length_cm = _parse_number(payload.get("length_cm"), 0, 100_000, "length_cm", errors)
-    width_cm = _parse_number(payload.get("width_cm"), 0, 100_000, "width_cm", errors)
-    height_cm = _parse_number(payload.get("height_cm"), 0, 100_000, "height_cm", errors)
+    length_raw = payload.get("length_cm")
+    width_raw = payload.get("width_cm")
+    height_raw = payload.get("height_cm")
 
-    weight_kg = _parse_number(payload.get("weight_kg"), 0, 100_000, "weight_kg", errors)
+    length_cm = _parse_number(length_raw, 0, 100_000, "length_cm", errors)
+    width_cm = _parse_number(width_raw, 0, 100_000, "width_cm", errors)
+    height_cm = _parse_number(height_raw, 0, 100_000, "height_cm", errors)
+
+    provided_dimensions = [
+        field
+        for field, raw in (
+            ("length_cm", length_raw),
+            ("width_cm", width_raw),
+            ("height_cm", height_raw),
+        )
+        if not _is_blank(raw)
+    ]
+
+    if provided_dimensions and len(provided_dimensions) != 3:
+        for field in ("length_cm", "width_cm", "height_cm"):
+            if _is_blank(payload.get(field)):
+                errors.setdefault(
+                    field,
+                    "برای ثبت ابعاد، تکمیل هر سه مقدار الزامی است.",
+                )
+
+    weight_raw = payload.get("weight_kg")
+    if _is_blank(weight_raw):
+        errors["weight_kg"] = "وزن کالا الزامی است."
+        weight_kg = None
+    else:
+        weight_kg = _parse_number(weight_raw, 0, 100_000, "weight_kg", errors)
 
     volume_cbm = payload.get("volume_cbm")
     parsed_volume: float | None
@@ -178,18 +205,19 @@ def validate_shipment_draft():
         )
 
     computed_volume = parsed_volume
-    if computed_volume is None and units is not None:
-        if (
-            length_cm is not None
-            and width_cm is not None
-            and height_cm is not None
-            and length_cm > 0
-            and width_cm > 0
-            and height_cm > 0
-        ):
-            cubic_cm = length_cm * width_cm * height_cm * units
-            computed_volume = cubic_cm / math.pow(100, 3)
-            computed_volume = round(computed_volume, 6)
+    if (
+        computed_volume is None
+        and units is not None
+        and length_cm is not None
+        and width_cm is not None
+        and height_cm is not None
+        and length_cm > 0
+        and width_cm > 0
+        and height_cm > 0
+    ):
+        cubic_cm = length_cm * width_cm * height_cm * units
+        computed_volume = cubic_cm / math.pow(100, 3)
+        computed_volume = round(computed_volume, 6)
 
     if computed_volume is None:
         computed_volume = 0.0
@@ -197,8 +225,16 @@ def validate_shipment_draft():
     return {"ok": True, "volume_cbm": computed_volume}
 
 
-def _parse_int(value, minimum: int, maximum: int, field: str, errors: dict[str, str]) -> int | None:
+def _is_blank(value) -> bool:
     if value is None:
+        return True
+    if isinstance(value, str):
+        return value.strip() == ""
+    return False
+
+
+def _parse_int(value, minimum: int, maximum: int, field: str, errors: dict[str, str]) -> int | None:
+    if _is_blank(value):
         errors[field] = "وارد کردن مقدار الزامی است."
         return None
     try:
@@ -219,8 +255,10 @@ def _parse_number(
     field: str,
     errors: dict[str, str],
 ) -> float | None:
-    if value is None:
-        return 0.0
+    if _is_blank(value):
+        return None
+    if isinstance(value, str):
+        value = value.strip()
     try:
         parsed = float(value)
     except (TypeError, ValueError):
