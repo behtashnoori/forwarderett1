@@ -360,6 +360,7 @@ const GoodsDetails = ({
       contact_name: contactName,
       is_hazfreight: form.isHazardous,
       is_refrigerated: form.isRefrigerated,
+      status: "submitted",
     };
 
     if (form.incotermCode.trim()) payload.incoterm_code = form.incotermCode.trim();

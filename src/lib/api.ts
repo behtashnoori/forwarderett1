@@ -151,6 +151,7 @@ export type CreateRequestPayload = {
   contact_phone?: string;
   contact_email?: string;
   note_text?: string;
+  status?: "NEW" | "submitted";
 };
 
 export type ShipmentRequestResponse = {
@@ -195,7 +196,7 @@ export const requestApi = {
     fetch(`${API_BASE}/requests`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ ...payload, status: payload.status ?? "NEW" }),
     }).then(async (r) => {
       if (!r.ok) throw new Error(await r.text());
       return r.json() as Promise<ShipmentRequestResponse>;
@@ -233,6 +234,7 @@ export type SubmitShipmentRequestPayload = {
   contact_phone?: string | null;
   contact_email?: string | null;
   note_text?: string | null;
+  status?: "NEW" | "submitted";
 };
 
 export type SubmitShipmentResponse = {
