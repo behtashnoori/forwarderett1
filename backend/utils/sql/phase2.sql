@@ -31,15 +31,6 @@ INSERT INTO public.shipment_mode (code, name_fa) VALUES
  ('sea','دریایی')
 ON CONFLICT (code) DO UPDATE SET name_fa = EXCLUDED.name_fa;
 
-INSERT INTO public.incoterm (code, name_fa) VALUES
- ('EXW','تحویل در محل فروشنده (EXW)'),
- ('FCA','تحویل به حامل (FCA)'),
- ('CPT','کرایه پرداخت تا (CPT)'),
- ('CIP','کرایه و بیمه پرداخت تا (CIP)'),
- ('DAP','تحویل در محل (DAP)'),
- ('DDP','تحویل عوارش پرداخت‌شده (DDP)')
-ON CONFLICT (code) DO UPDATE SET name_fa = EXCLUDED.name_fa;
-
 INSERT INTO public.package_type (code, name_fa) VALUES
  ('box','کارتن/باکس'),
  ('pallet','پالت'),
