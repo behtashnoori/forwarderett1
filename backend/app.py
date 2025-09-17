@@ -26,7 +26,17 @@ def create_app() -> Flask:
     app.logger.info("DB (masked): %s", masked)
 
     db.init_app(app)
-    CORS(app, resources={r"/api/*": {"origins": [app.config["CORS_ORIGIN"]]}})
+
+    cors_setting = (app.config.get("CORS_ORIGIN") or "").strip()
+    if cors_setting == "*":
+        cors_resources = {r"/api/*": {"origins": "*"}}
+        app.logger.info("CORS origins: * (all origins allowed for /api routes)")
+    else:
+        origins = [origin.strip() for origin in cors_setting.split(",") if origin.strip()]
+        cors_resources = {r"/api/*": {"origins": origins}}
+        app.logger.info("CORS origins: %s", origins)
+
+    CORS(app, resources=cors_resources)
 
     app.register_blueprint(geo_bp, url_prefix="/api")
     app.register_blueprint(req_bp, url_prefix="/api")

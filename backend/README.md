@@ -8,11 +8,15 @@
 
    ```env
    DATABASE_URL=postgresql+psycopg2://postgres:bagheri13@127.0.0.1:5432/forwarderett
+   # مثال‌ها:
+   # CORS_ORIGIN=http://localhost:5173
+   # CORS_ORIGIN=http://localhost:8084,http://localhost:5173
+   # CORS_ORIGIN=*
    CORS_ORIGIN=http://localhost:5173
    SLA_HOURS=2
    ```
 
-2. مقادیر بالا هنگام راه‌اندازی توسط `python-dotenv` بارگذاری می‌شوند و به SQLAlchemy و CORS تزریق می‌گردند.
+2. مقادیر بالا هنگام راه‌اندازی توسط `python-dotenv` بارگذاری می‌شوند. مقدار `CORS_ORIGIN` می‌تواند یک آدرس، چند آدرس کاما جدا یا `*` باشد تا CORS فقط برای همان Originها (یا تمام Originها) روی مسیرهای `/api/*` فعال شود.
 
 ## Installation & Run (dev)
 
