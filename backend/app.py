@@ -10,6 +10,7 @@ from .config import Config
 from .db import db
 from .debug_routes import debug_bp
 from .geo_routes import geo_bp
+from .meta_routes import meta_bp
 from .request_routes import req_bp
 from .utils.errors import json_error, register_error_handlers
 
@@ -58,6 +59,7 @@ def create_app() -> Flask:
     )
 
     app.register_blueprint(geo_bp, url_prefix="/api")
+    app.register_blueprint(meta_bp, url_prefix="/api")
     app.register_blueprint(req_bp, url_prefix="/api")
     app.register_blueprint(debug_bp, url_prefix="/api")
 
