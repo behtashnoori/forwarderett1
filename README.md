@@ -1,73 +1,66 @@
-# Welcome to your Lovable project
+# Forwarderett — Local Development Guide
 
-## Project info
+این مخزن شامل یک بک‌اند Flask (با PostgreSQL) و یک فرانت React/Vite برای انتخاب مبدأ/مقصد است.
 
-**URL**: https://lovable.dev/projects/e5b60dae-3365-4585-8db0-7b8c48d81a7d
+## پیش‌نیازها
 
-## How can I edit this code?
+- Python 3.11+
+- Node.js 20 و npm 10
+- PostgreSQL در حال اجرا با دیتابیس حاوی جداول `province`، `county` و `city`
 
-There are several ways of editing your application.
+## تنظیم متغیرهای محیطی
 
-**Use Lovable**
+### Backend (`backend/.env`)
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/e5b60dae-3365-4585-8db0-7b8c48d81a7d) and start prompting.
+یک فایل `.env` در پوشهٔ `backend/` (یا ریشهٔ ریپو) بسازید و مقادیر زیر را قرار دهید:
 
-Changes made via Lovable will be committed automatically to this repo.
+```env
+DATABASE_URL=postgresql+psycopg2://postgres:bagheri13@127.0.0.1:5432/forwarderett
+CORS_ORIGIN=http://localhost:5173
+SLA_HOURS=2
+```
 
-**Use your preferred IDE**
+### Frontend (`.env.local`)
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
+فایل `.env.local` را در ریشهٔ پروژه ایجاد کنید (در گیت نادیده گرفته می‌شود):
 
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
+```env
+VITE_API_BASE=http://127.0.0.1:5000/api
+```
 
-Follow these steps:
+## اجرای بک‌اند
 
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
+```bash
+python -m venv .venv
+source .venv/bin/activate           # ویندوز: .\.venv\Scripts\Activate.ps1
+pip install -r backend/requirements.txt
+flask --app backend.app run
+```
 
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
+پس از اجرا، سرویس روی `http://127.0.0.1:5000` در دسترس است.
 
-# Step 3: Install the necessary dependencies.
-npm i
+### تست سریع بک‌اند
 
-# Step 4: Start the development server with auto-reloading and an instant preview.
+```bash
+curl http://127.0.0.1:5000/api/health
+curl http://127.0.0.1:5000/api/debug/geo-check
+curl "http://127.0.0.1:5000/api/geo/provinces?limit=5"
+```
+
+## اجرای فرانت
+
+در ترمینال دوم:
+
+```bash
+npm install
 npm run dev
 ```
 
-**Edit a file directly in GitHub**
+سپس رابط روی `http://localhost:5173` در دسترس خواهد بود و درخواست‌ها را به بک‌اند (`VITE_API_BASE`) می‌فرستد.
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+## پذیرش
 
-**Use GitHub Codespaces**
-
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
-
-## What technologies are used for this project?
-
-This project is built with:
-
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
-
-## How can I deploy this project?
-
-Simply open [Lovable](https://lovable.dev/projects/e5b60dae-3365-4585-8db0-7b8c48d81a7d) and click on Share -> Publish.
-
-## Can I connect a custom domain to my Lovable project?
-
-Yes, you can!
-
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
-
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+- `GET /api/health` مقدار `{ "ok": true }` برمی‌گرداند.
+- `GET /api/debug/geo-check` باید `db_ok=true` و شمارش جداول مثبت داشته باشد.
+- اندپوینت‌های `/api/geo/...` جست‌وجو و صفحه‌بندی را پشتیبانی می‌کنند.
+- در فرانت، انتخاب مبدأ/مقصد از طریق typeahead کار می‌کند و داده‌ها از بک‌اند بارگذاری می‌شود.

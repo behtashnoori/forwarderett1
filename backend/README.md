@@ -1,28 +1,34 @@
 # Backend Setup
 
-## Run (dev)
-```bash
-python -m venv venv
-source venv/bin/activate   # Windows: venv\Scripts\activate
-pip install -r backend/requirements.txt
-```
+این سرویس Flask فقط روت‌های جغرافیایی و ثبت درخواست را فراهم می‌کند و از PostgreSQL استفاده می‌کند.
 
 ## Environment
-فایل `.env` را می‌توانید در ریشهٔ مخزن یا در `backend/.env` بسازید (دومی در صورت وجود اولویت دارد):
-```env
-DATABASE_URL=postgresql+psycopg2://postgres:bagheri13@127.0.0.1:5432/forwarder_db
-CORS_ORIGIN=http://localhost:5173
-SLA_HOURS=2
-```
 
-## Run
+1. فایل `.env` را از روی `.env.example` بسازید (می‌توانید در ریشه یا داخل `backend/` ایجاد کنید؛ در صورت وجود نسخهٔ داخل `backend/` اولویت دارد):
+
+   ```env
+   DATABASE_URL=postgresql+psycopg2://postgres:bagheri13@127.0.0.1:5432/forwarderett
+   CORS_ORIGIN=http://localhost:5173
+   SLA_HOURS=2
+   ```
+
+2. مقادیر بالا هنگام راه‌اندازی توسط `python-dotenv` بارگذاری می‌شوند و به SQLAlchemy و CORS تزریق می‌گردند.
+
+## Installation & Run (dev)
+
 ```bash
+python -m venv venv
+source venv/bin/activate      # ویندوز: .\.venv\Scripts\Activate.ps1 یا venv\Scripts\activate
+pip install -r backend/requirements.txt
 flask --app backend.app run
 ```
 
 ## Smoke tests
+
+بعد از بالا آمدن سرور می‌توانید اتصال را بررسی کنید:
+
 ```bash
 curl http://127.0.0.1:5000/api/health
 curl http://127.0.0.1:5000/api/debug/geo-check
-curl "http://127.0.0.1:5000/api/geo/provinces?q=تهران&limit=10"
+curl "http://127.0.0.1:5000/api/geo/provinces?q=تهران&limit=5"
 ```
