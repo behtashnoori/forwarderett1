@@ -35,7 +35,11 @@ def create_app() -> Flask:
     with app.app_context():
         ensure_phase2_catalog()
 
-    cors_setting = (app.config.get("CORS_ORIGIN") or "").strip()
+    cors_setting = (
+        app.config.get("CORS_ORIGINS")
+        or app.config.get("CORS_ORIGIN")
+        or ""
+    ).strip()
     default_dev_origins = [
         "http://localhost:5173",
         "http://localhost:8080",
@@ -43,6 +47,7 @@ def create_app() -> Flask:
         "http://localhost:8082",
         "http://localhost:8083",
         "http://localhost:8084",
+        "http://127.0.0.1:5173",
     ]
     if cors_setting == "*":
         resolved_origins: str | list[str] = "*"
@@ -82,7 +87,7 @@ def create_app() -> Flask:
             app.logger.exception("Health check DB error: %s", exc)
             return json_error(500, "اتصال به پایگاه‌داده برقرار نیست.")
 
-        return {"ok": True}
+        return {"status": "ok"}
 
     return app
 

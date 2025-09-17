@@ -17,5 +17,6 @@ class Config:
     SQLALCHEMY_DATABASE_URI = getenv("DATABASE_URL")
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_ENGINE_OPTIONS = {"pool_pre_ping": True}
+    CORS_ORIGINS = getenv("CORS_ORIGINS")
     CORS_ORIGIN = getenv("CORS_ORIGIN", "http://localhost:5173")
     SLA_HOURS = SLA_HOURS
