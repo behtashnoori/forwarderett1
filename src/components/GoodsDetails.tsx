@@ -1,90 +1,166 @@
-import { useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
+import { useIncoterms, usePackageTypes, useShipmentModes } from "@/hooks/useCatalog";
 import {
-  metaApi,
   shipmentApi,
-  type IncotermOption,
-  type ModeOption,
-  type PackageTypeOption,
+  type SubmitShipmentRequestPayload,
+  type SubmitShipmentResponse,
 } from "@/lib/api";
+import type { GeoValue } from "./CascadingSelect";
 
 type GoodsDetailsProps = {
+  origin: GeoValue;
+  destination: GeoValue;
   resetKey: number;
   onResetAll: () => void;
 };
 
 type GoodsFormState = {
-  mode_shipment: string;
-  incoterm_code_text: string;
-  is_hazfreight: boolean;
-  is_refrigerated: boolean;
-  commodity_name: string;
-  hs_code_text: string;
-  package_type_text: string;
+  modeId: string;
+  incotermCode: string;
+  packageId: string;
+  isHazardous: boolean;
+  isRefrigerated: boolean;
+  commodityName: string;
+  hsCode: string;
   units: string;
-  length_cm: string;
-  width_cm: string;
-  height_cm: string;
-  weight_kg: string;
-  volume_cbm: string;
-  ready_date: string;
-  contact_name: string;
-  contact_phone: string;
-  contact_email: string;
-  note_text: string;
+  length: string;
+  width: string;
+  height: string;
+  weight: string;
+  volume: string;
+  readyDate: string;
+  contactName: string;
+  contactPhone: string;
+  contactEmail: string;
+  note: string;
 };
 
-type FormErrors = Record<string, string>;
+type FormErrors = Partial<Record<keyof GoodsFormState, string>> & {
+  general?: string;
+};
 
 const DEFAULT_FORM: GoodsFormState = {
-  mode_shipment: "",
-  incoterm_code_text: "",
-  is_hazfreight: false,
-  is_refrigerated: false,
-  commodity_name: "",
-  hs_code_text: "",
-  package_type_text: "",
+  modeId: "",
+  incotermCode: "",
+  packageId: "",
+  isHazardous: false,
+  isRefrigerated: false,
+  commodityName: "",
+  hsCode: "",
   units: "",
-  length_cm: "",
-  width_cm: "",
-  height_cm: "",
-  weight_kg: "",
-  volume_cbm: "",
-  ready_date: "",
-  contact_name: "",
-  contact_phone: "",
-  contact_email: "",
-  note_text: "",
+  length: "",
+  width: "",
+  height: "",
+  weight: "",
+  volume: "",
+  readyDate: "",
+  contactName: "",
+  contactPhone: "",
+  contactEmail: "",
+  note: "",
 };
 
-const SELECT_PLACEHOLDER = "انتخاب کنید";
+const PHONE_RE = /^0\d{10}$/;
+const EMAIL_RE = /^\S+@\S+\.\S+$/;
 
-const GoodsDetails = ({ resetKey, onResetAll }: GoodsDetailsProps) => {
+const GoodsDetails = ({ origin, destination, resetKey, onResetAll }: GoodsDetailsProps) => {
   const { toast } = useToast();
+  const containerRef = useRef<HTMLDivElement | null>(null);
 
   const [form, setForm] = useState<GoodsFormState>(DEFAULT_FORM);
   const [errors, setErrors] = useState<FormErrors>({});
-  const [modes, setModes] = useState<ModeOption[]>([]);
-  const [packages, setPackages] = useState<PackageTypeOption[]>([]);
-  const [incoterms, setIncoterms] = useState<IncotermOption[]>([]);
-  const [metaLoading, setMetaLoading] = useState({
-    modes: false,
-    packages: false,
-    incoterms: false,
-  });
   const [submitting, setSubmitting] = useState(false);
-  const [volumeManual, setVolumeManual] = useState(false);
+  const [success, setSuccess] = useState<SubmitShipmentResponse | null>(null);
+  const lastModeRef = useRef<string>("");
 
-  const clearErrors = (field: keyof GoodsFormState) => {
+  const modes = useShipmentModes();
+  const packages = usePackageTypes();
+  const incoterms = useIncoterms();
+
+  useEffect(() => {
+    setForm(DEFAULT_FORM);
+    setErrors({});
+    setSuccess(null);
+  }, [resetKey]);
+
+  useEffect(() => {
+    if (lastModeRef.current && lastModeRef.current !== form.modeId) {
+      setForm((prev) =>
+        prev.incotermCode ? { ...prev, incotermCode: "" } : prev,
+      );
+    }
+    if (!form.modeId && form.incotermCode) {
+      setForm((prev) => ({ ...prev, incotermCode: "" }));
+    }
+    lastModeRef.current = form.modeId;
+  }, [form.incotermCode, form.modeId]);
+
+  useEffect(() => {
+    if (containerRef.current) {
+      containerRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, []);
+
+  const computedVolume = useMemo(() => {
+    if (form.volume.trim()) return null;
+    const units = Number(form.units);
+    const length = Number(form.length);
+    const width = Number(form.width);
+    const height = Number(form.height);
+    if (
+      Number.isFinite(units) &&
+      Number.isFinite(length) &&
+      Number.isFinite(width) &&
+      Number.isFinite(height) &&
+      units > 0 &&
+      length > 0 &&
+      width > 0 &&
+      height > 0
+    ) {
+      const volume = ((length * width * height) / 1_000_000) * units;
+      return Number.isFinite(volume) ? Number(volume.toFixed(3)) : null;
+    }
+    return null;
+  }, [form.height, form.length, form.units, form.volume, form.width]);
+
+  const isGeoComplete = Boolean(
+    origin.province_id &&
+      origin.county_id &&
+      origin.city_id &&
+      destination.province_id &&
+      destination.county_id &&
+      destination.city_id,
+  );
+
+  const requiredFilled = Boolean(
+    form.modeId &&
+      form.packageId &&
+      form.units &&
+      form.commodityName.trim() &&
+      form.weight &&
+      form.contactName.trim(),
+  );
+
+  const canSubmit = isGeoComplete && requiredFilled && !submitting;
+
+  const updateField = <K extends keyof GoodsFormState>(field: K, value: GoodsFormState[K]) => {
+    setForm((prev) => ({ ...prev, [field]: value }));
     setErrors((prev) => {
       if (!prev[field]) return prev;
       const next = { ...prev };
@@ -93,685 +169,490 @@ const GoodsDetails = ({ resetKey, onResetAll }: GoodsDetailsProps) => {
     });
   };
 
-  useEffect(() => {
-    setForm(DEFAULT_FORM);
-    setErrors({});
-    setVolumeManual(false);
-  }, [resetKey]);
-
-  useEffect(() => {
-    let active = true;
-
-    const loadMeta = async () => {
-      setMetaLoading((prev) => ({ ...prev, modes: true, packages: true }));
-      try {
-        const [modesData, packageData] = await Promise.all([
-          metaApi.getModes(),
-          metaApi.getPackageTypes(),
-        ]);
-        if (active) {
-          setModes(modesData);
-          setPackages(packageData);
-        }
-      } catch (error) {
-        console.error(error);
-        if (active) {
-          toast({
-            title: "خطا در دریافت اطلاعات",
-            description: "بارگذاری گزینه‌های فرم با مشکل روبه‌رو شد.",
-            variant: "destructive",
-          });
-        }
-      } finally {
-        if (active) {
-          setMetaLoading((prev) => ({ ...prev, modes: false, packages: false }));
-        }
-      }
-    };
-
-    loadMeta();
-
-    return () => {
-      active = false;
-    };
-  }, [resetKey, toast]);
-
-  useEffect(() => {
-    if (!form.mode_shipment) {
-      setIncoterms([]);
-      return;
-    }
-
-    let active = true;
-    setMetaLoading((prev) => ({ ...prev, incoterms: true }));
-
-    const fetchIncoterms = async () => {
-      try {
-        const data = await metaApi.getIncoterms(form.mode_shipment);
-        if (active) {
-          setIncoterms(data);
-        }
-      } catch (error) {
-        console.error(error);
-        if (active) {
-          toast({
-            title: "خطا در دریافت اینکوترمز",
-            description: "امکان بارگذاری لیست اینکوترمز وجود ندارد.",
-            variant: "destructive",
-          });
-        }
-      } finally {
-        if (active) {
-          setMetaLoading((prev) => ({ ...prev, incoterms: false }));
-        }
-      }
-    };
-
-    fetchIncoterms();
-
-    return () => {
-      active = false;
-    };
-  }, [form.mode_shipment, toast]);
-
-  const handleChange = <K extends keyof GoodsFormState>(field: K, value: GoodsFormState[K]) => {
-    setForm((prev) => ({ ...prev, [field]: value }));
-    clearErrors(field);
-  };
-
-  const handleCheckbox = (field: "is_hazfreight" | "is_refrigerated", checked: boolean | "indeterminate") => {
-    handleChange(field, Boolean(checked));
-  };
-
-  const numericOrNull = (value: string) => {
-    if (!value.trim()) return null;
+  const numericOrUndefined = (value: string) => {
+    if (!value.trim()) return undefined;
     const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : null;
+    return Number.isFinite(parsed) ? parsed : undefined;
   };
 
-  const computedVolume = useMemo(() => {
-    if (volumeManual && form.volume_cbm.trim()) {
-      return null;
-    }
-    if (form.volume_cbm.trim()) {
-      return null;
-    }
-    const length = numericOrNull(form.length_cm);
-    const width = numericOrNull(form.width_cm);
-    const height = numericOrNull(form.height_cm);
-    const units = numericOrNull(form.units);
-    if (
-      length === null ||
-      width === null ||
-      height === null ||
-      units === null ||
-      length <= 0 ||
-      width <= 0 ||
-      height <= 0 ||
-      units <= 0
-    ) {
-      return null;
-    }
-    const cubic = ((length * width * height) / 1_000_000) * units;
-    if (!Number.isFinite(cubic)) return null;
-    return Math.round(cubic * 1_000_000) / 1_000_000;
-  }, [form.height_cm, form.length_cm, form.units, form.volume_cbm, form.width_cm, volumeManual]);
-
-  const volumeDisplay = useMemo(() => {
-    if (volumeManual || form.volume_cbm.trim()) {
-      return form.volume_cbm;
-    }
-    return computedVolume !== null ? String(computedVolume) : "";
-  }, [computedVolume, form.volume_cbm, volumeManual]);
-
-  const volumeReadOnly = !volumeManual && !form.volume_cbm.trim() && computedVolume !== null;
-
-  const validateForm = () => {
-    const newErrors: FormErrors = {};
-
-    if (!form.mode_shipment) {
-      newErrors.mode_shipment = "لطفاً نحوه حمل را انتخاب کنید.";
-    }
-
-    if (form.incoterm_code_text) {
-      const found = incoterms.some(
-        (item) => item.code?.toLowerCase() === form.incoterm_code_text.toLowerCase(),
-      );
-      if (!found) {
-        newErrors.incoterm_code_text = "اینکوترمز انتخاب‌شده معتبر نیست.";
-      }
-    }
-
-    if (!form.commodity_name.trim()) {
-      newErrors.commodity_name = "نام کالا الزامی است.";
-    } else if (form.commodity_name.trim().length > 120) {
-      newErrors.commodity_name = "نام کالا نباید بیش از ۱۲۰ کاراکتر باشد.";
-    }
-
-    if (form.hs_code_text && form.hs_code_text.trim().length > 20) {
-      newErrors.hs_code_text = "کد HS نباید بیش از ۲۰ کاراکتر باشد.";
-    }
-
-    if (!form.package_type_text) {
-      newErrors.package_type_text = "نوع بسته‌بندی را انتخاب کنید.";
-    } else {
-      const found = packages.some(
-        (pkg) => pkg.value?.toLowerCase() === form.package_type_text.toLowerCase(),
-      );
-      if (!found) {
-        newErrors.package_type_text = "نوع بسته‌بندی انتخاب‌شده معتبر نیست.";
-      }
-    }
-
-    const unitsValue = numericOrNull(form.units);
-    if (unitsValue === null) {
-      newErrors.units = "تعداد را وارد کنید.";
-    } else if (!Number.isInteger(unitsValue)) {
-      newErrors.units = "تعداد باید عدد صحیح باشد.";
-    } else if (unitsValue < 1 || unitsValue > 999999) {
-      newErrors.units = "تعداد باید بین ۱ و ۹۹۹۹۹۹ باشد.";
-    }
-
-    const dims = [form.length_cm, form.width_cm, form.height_cm];
-    const anyDim = dims.some((value) => value.trim() !== "");
-    const allDim = dims.every((value) => value.trim() !== "");
-    if (anyDim && !allDim) {
-      newErrors.length_cm = "در صورت وارد کردن ابعاد، طول/عرض/ارتفاع را کامل کنید.";
-      newErrors.width_cm = newErrors.length_cm;
-      newErrors.height_cm = newErrors.length_cm;
-    }
-
-    const validateDimension = (field: "length_cm" | "width_cm" | "height_cm") => {
-      const value = form[field];
-      if (!value.trim()) return;
-      const parsed = Number(value);
-      if (!Number.isFinite(parsed)) {
-        newErrors[field] = "مقدار باید عددی باشد.";
-      } else if (parsed < 0 || parsed > 100000) {
-        newErrors[field] = "مقدار باید بین ۰ و ۱۰۰۰۰۰ باشد.";
-      }
-    };
-
-    validateDimension("length_cm");
-    validateDimension("width_cm");
-    validateDimension("height_cm");
-
-    if (form.weight_kg.trim()) {
-      const weight = Number(form.weight_kg);
-      if (!Number.isFinite(weight)) {
-        newErrors.weight_kg = "وزن باید عددی باشد.";
-      } else if (weight < 0 || weight > 100000) {
-        newErrors.weight_kg = "وزن باید بین ۰ و ۱۰۰۰۰۰ باشد.";
-      }
-    }
-
-    const volumeValue = volumeManual || form.volume_cbm.trim() ? Number(volumeDisplay) : computedVolume;
-    if (volumeValue != null) {
-      if (!Number.isFinite(volumeValue)) {
-        newErrors.volume_cbm = "حجم باید عددی معتبر باشد.";
-      } else if (volumeValue < 0 || volumeValue > 100000) {
-        newErrors.volume_cbm = "حجم باید بین ۰ و ۱۰۰۰۰۰ باشد.";
-      }
-    }
-
-    if (form.ready_date) {
-      const today = new Date();
-      const [year, month, day] = form.ready_date.split("-").map(Number);
-      if (!year || !month || !day) {
-        newErrors.ready_date = "تاریخ واردشده معتبر نیست.";
-      } else {
-        const readyDate = new Date(year, month - 1, day);
-        const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-        if (readyDate < todayMidnight) {
-          newErrors.ready_date = "تاریخ باید برابر یا بعد از امروز باشد.";
-        }
-      }
-    }
-
-    if (!form.contact_name.trim()) {
-      newErrors.contact_name = "نام مخاطب الزامی است.";
-    } else if (form.contact_name.trim().length > 80) {
-      newErrors.contact_name = "نام مخاطب نباید بیش از ۸۰ کاراکتر باشد.";
-    }
-
-    if (form.contact_phone.trim()) {
-      const pattern = /^09\d{9}$/;
-      if (!pattern.test(form.contact_phone.trim())) {
-        newErrors.contact_phone = "شماره باید با ۰۹ شروع شود و ۱۱ رقم باشد.";
-      }
-    }
-
-    if (form.contact_email.trim()) {
-      const emailPattern = /^\S+@\S+\.\S+$/;
-      if (!emailPattern.test(form.contact_email.trim())) {
-        newErrors.contact_email = "ایمیل واردشده معتبر نیست.";
-      }
-    }
-
-    if (form.note_text.length > 140) {
-      newErrors.note_text = "حداکثر ۱۴۰ کاراکتر مجاز است.";
-    }
-
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
-
-  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (submitting) return;
+    setSuccess(null);
 
-    if (!validateForm()) {
-      toast({
-        title: "خطا در اعتبارسنجی",
-        description: "لطفاً خطاهای فرم را برطرف کنید.",
-        variant: "destructive",
-      });
+    const nextErrors: FormErrors = {};
+
+    const modeId = Number(form.modeId);
+    if (!Number.isInteger(modeId) || modeId <= 0) {
+      nextErrors.modeId = "نحوه حمل را انتخاب کنید.";
+    }
+
+    const packageId = Number(form.packageId);
+    if (!Number.isInteger(packageId) || packageId <= 0) {
+      nextErrors.packageId = "نوع بسته‌بندی را انتخاب کنید.";
+    }
+
+    const units = Number(form.units);
+    if (!Number.isInteger(units) || units <= 0) {
+      nextErrors.units = "تعداد باید عدد صحیح مثبت باشد.";
+    }
+
+    const weight = Number(form.weight);
+    if (!Number.isFinite(weight) || weight < 0) {
+      nextErrors.weight = "وزن معتبر وارد کنید.";
+    }
+
+    const length = numericOrUndefined(form.length);
+    const width = numericOrUndefined(form.width);
+    const height = numericOrUndefined(form.height);
+    const dims = [length, width, height].filter((value) => value !== undefined);
+    if (dims.length > 0 && dims.length < 3) {
+      nextErrors.length = "برای ثبت ابعاد، هر سه مقدار لازم است.";
+      nextErrors.width = "برای ثبت ابعاد، هر سه مقدار لازم است.";
+      nextErrors.height = "برای ثبت ابعاد، هر سه مقدار لازم است.";
+    }
+
+    const volumeManual = form.volume.trim();
+    const volumeValue = volumeManual ? Number(volumeManual) : computedVolume ?? undefined;
+    if (volumeManual) {
+      if (!Number.isFinite(volumeValue) || volumeValue < 0) {
+        nextErrors.volume = "حجم معتبر وارد کنید.";
+      }
+    }
+
+    const commodityName = form.commodityName.trim();
+    if (!commodityName) {
+      nextErrors.commodityName = "نام کالا الزامی است.";
+    } else if (commodityName.length > 120) {
+      nextErrors.commodityName = "نام کالا نباید بیش از ۱۲۰ کاراکتر باشد.";
+    }
+
+    const hsCode = form.hsCode.trim();
+    if (hsCode && hsCode.length > 20) {
+      nextErrors.hsCode = "کد HS نباید بیش از ۲۰ کاراکتر باشد.";
+    }
+
+    const contactName = form.contactName.trim();
+    if (!contactName) {
+      nextErrors.contactName = "نام مخاطب الزامی است.";
+    } else if (contactName.length > 80) {
+      nextErrors.contactName = "نام مخاطب نباید بیش از ۸۰ کاراکتر باشد.";
+    }
+
+    const contactPhone = form.contactPhone.trim();
+    if (contactPhone && !PHONE_RE.test(contactPhone)) {
+      nextErrors.contactPhone = "شماره تماس باید با ۰ شروع شود و ۱۱ رقم باشد.";
+    }
+
+    const contactEmail = form.contactEmail.trim();
+    if (contactEmail && !EMAIL_RE.test(contactEmail)) {
+      nextErrors.contactEmail = "ایمیل واردشده معتبر نیست.";
+    }
+
+    const note = form.note.trim();
+    if (note.length > 140) {
+      nextErrors.note = "یادداشت نباید بیش از ۱۴۰ کاراکتر باشد.";
+    }
+
+    const readyDate = form.readyDate.trim();
+    if (readyDate) {
+      const today = new Date();
+      const selected = new Date(`${readyDate}T00:00:00`);
+      selected.setHours(0, 0, 0, 0);
+      today.setHours(0, 0, 0, 0);
+      if (Number.isNaN(selected.getTime())) {
+        nextErrors.readyDate = "تاریخ معتبر نیست.";
+      } else if (selected < today) {
+        nextErrors.readyDate = "تاریخ نمی‌تواند قبل از امروز باشد.";
+      }
+    }
+
+    if (!origin.province_id || !origin.county_id || !origin.city_id) {
+      nextErrors.general = "مبدأ را کامل انتخاب کنید.";
+    }
+    if (!destination.province_id || !destination.county_id || !destination.city_id) {
+      nextErrors.general = nextErrors.general
+        ? `${nextErrors.general} مقصد را نیز کامل انتخاب کنید.`
+        : "مقصد را کامل انتخاب کنید.";
+    }
+
+    if (Object.keys(nextErrors).length > 0) {
+      setErrors(nextErrors);
       return;
     }
 
-    const resolvedVolume = (() => {
-      if (volumeManual || form.volume_cbm.trim()) {
-        const numeric = Number(volumeDisplay);
-        return Number.isFinite(numeric) ? numeric : undefined;
-      }
-      if (computedVolume !== null) {
-        return computedVolume;
-      }
-      return undefined;
-    })();
-
-    const payload = {
-      mode_shipment: form.mode_shipment,
-      incoterm_code_text: form.incoterm_code_text || undefined,
-      is_hazfreight: form.is_hazfreight,
-      is_refrigerated: form.is_refrigerated,
-      commodity_name: form.commodity_name.trim(),
-      hs_code_text: form.hs_code_text.trim() || undefined,
-      package_type_text: form.package_type_text,
-      units: Number(form.units),
-      length_cm: numericOrNull(form.length_cm) ?? undefined,
-      width_cm: numericOrNull(form.width_cm) ?? undefined,
-      height_cm: numericOrNull(form.height_cm) ?? undefined,
-      weight_kg: numericOrNull(form.weight_kg) ?? undefined,
-      volume_cbm: resolvedVolume ?? undefined,
-      ready_date: form.ready_date || undefined,
-      contact_name: form.contact_name.trim(),
-      contact_phone: form.contact_phone.trim() || undefined,
-      contact_email: form.contact_email.trim() || undefined,
-      note_text: form.note_text || undefined,
+    const payload: SubmitShipmentRequestPayload = {
+      origin_province_id: origin.province_id!,
+      origin_county_id: origin.county_id!,
+      origin_city_id: origin.city_id!,
+      dest_province_id: destination.province_id!,
+      dest_county_id: destination.county_id!,
+      dest_city_id: destination.city_id!,
+      mode_shipment_mode: modeId,
+      package_type: packageId,
+      units,
+      commodity_name: commodityName,
+      weight_kg: weight,
+      contact_name: contactName,
+      is_hazfreight: form.isHazardous,
+      is_refrigerated: form.isRefrigerated,
     };
+
+    if (form.incotermCode.trim()) payload.incoterm_code = form.incotermCode.trim();
+    if (hsCode) payload.hs_code = hsCode;
+    if (length !== undefined) payload.length_cm = length;
+    if (width !== undefined) payload.width_cm = width;
+    if (height !== undefined) payload.height_cm = height;
+    if (volumeValue !== undefined) payload.volume_m3 = Number(volumeValue.toFixed(3));
+    if (readyDate) payload.ready_date = readyDate;
+    if (contactPhone) payload.contact_phone = contactPhone;
+    if (contactEmail) payload.contact_email = contactEmail;
+    if (note) payload.note_text = note;
 
     setSubmitting(true);
+    setErrors({});
+
     try {
-      const result = await shipmentApi.validateDraft(payload);
-      setVolumeManual(true);
-      setForm((prev) => ({
-        ...prev,
-        volume_cbm: result.volume_cbm.toString(),
-      }));
-      setErrors({});
+      const response = await shipmentApi.submit(payload);
+      setSuccess(response);
       toast({
-        title: "اعتبارسنجی موفق",
-        description: "اطلاعات معتبر است.",
+        title: "درخواست با موفقیت ثبت شد.",
+        description: `شماره پیگیری ${response.shipment_request_id} با SLA ${
+          response.sla_hours ?? 0
+        } ساعت ثبت شد.`,
       });
+      setForm(DEFAULT_FORM);
     } catch (error) {
-      console.error(error);
-      if (error instanceof Error && (error as Error & { payload?: unknown }).payload) {
-        const payloadError = (error as Error & { payload?: unknown }).payload as {
-          error?: string;
-          details?: { fields?: Record<string, string> };
-          request_id?: string;
-        };
-        if (payloadError?.details?.fields) {
-          setErrors(payloadError.details.fields);
+      const err = error as Error & { status?: number; payload?: unknown };
+      if (err.payload && typeof err.payload === "object" && err.payload !== null) {
+        const details = (err.payload as { details?: { fields?: Record<string, string> } }).details;
+        if (details?.fields) {
+          const serverErrors: FormErrors = {};
+          Object.entries(details.fields).forEach(([key, value]) => {
+            if (key === "mode_shipment_mode") serverErrors.modeId = value;
+            else if (key === "package_type") serverErrors.packageId = value;
+            else if (key === "units") serverErrors.units = value;
+            else if (key === "commodity_name") serverErrors.commodityName = value;
+            else if (key === "hs_code") serverErrors.hsCode = value;
+            else if (key === "length_cm") serverErrors.length = value;
+            else if (key === "width_cm") serverErrors.width = value;
+            else if (key === "height_cm") serverErrors.height = value;
+            else if (key === "weight_kg") serverErrors.weight = value;
+            else if (key === "volume_m3") serverErrors.volume = value;
+            else if (key === "ready_date") serverErrors.readyDate = value;
+            else if (key === "contact_name") serverErrors.contactName = value;
+            else if (key === "contact_phone") serverErrors.contactPhone = value;
+            else if (key === "contact_email") serverErrors.contactEmail = value;
+            else if (key === "note_text") serverErrors.note = value;
+            else if (key === "incoterm_code") serverErrors.incotermCode = value;
+            else serverErrors.general = value;
+          });
+          setErrors(serverErrors);
         }
-        toast({
-          title: "خطا در ارسال", 
-          description:
-            payloadError?.error || "اعتبارسنجی با خطا مواجه شد. لطفاً دوباره تلاش کنید.",
-          variant: "destructive",
-        });
-      } else {
-        toast({
-          title: "خطا در ارسال",
-          description: "امکان برقراری ارتباط با سرور وجود ندارد.",
-          variant: "destructive",
-        });
       }
+      toast({
+        title: "ثبت درخواست ناموفق بود.",
+        description: "لطفاً خطاهای نمایش‌داده‌شده را بررسی کنید.",
+        variant: "destructive",
+      });
     } finally {
       setSubmitting(false);
     }
   };
 
-  const modePlaceholder = metaLoading.modes ? (
-    <span className="flex items-center gap-2 text-xs">
-      <Loader2 className="h-3 w-3 animate-spin" /> در حال بارگذاری…
-    </span>
-  ) : (
-    SELECT_PLACEHOLDER
-  );
-
-  const packagePlaceholder = metaLoading.packages ? (
-    <span className="flex items-center gap-2 text-xs">
-      <Loader2 className="h-3 w-3 animate-spin" /> در حال بارگذاری…
-    </span>
-  ) : (
-    SELECT_PLACEHOLDER
-  );
-
-  const incotermPlaceholder = metaLoading.incoterms ? (
-    <span className="flex items-center gap-2 text-xs">
-      <Loader2 className="h-3 w-3 animate-spin" /> در حال بارگذاری…
-    </span>
-  ) : (
-    "(اختیاری)"
-  );
+  const volumeDisplay = computedVolume ?? form.volume;
 
   return (
-    <Card className="shadow-card">
-      <CardHeader>
-        <CardTitle>جزئیات محموله</CardTitle>
+    <Card ref={containerRef} className="shadow-card">
+      <CardHeader className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+        <CardTitle className="text-2xl font-bold">جزئیات محموله</CardTitle>
+        <Button variant="outline" size="sm" onClick={onResetAll} type="button">
+          ریست همه انتخاب‌ها
+        </Button>
       </CardHeader>
-      <CardContent>
-        <form className="space-y-6" onSubmit={handleSubmit}>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <Label htmlFor="mode_shipment">نحوه حمل *</Label>
-              <Select
-                value={form.mode_shipment}
-                onValueChange={(value) => {
-                  handleChange("mode_shipment", value);
-                  handleChange("incoterm_code_text", "");
-                }}
-                disabled={metaLoading.modes}
-              >
-                <SelectTrigger id="mode_shipment">
-                  <SelectValue placeholder={modePlaceholder} />
-                </SelectTrigger>
-                <SelectContent>
-                  {modes.map((mode) => (
-                    <SelectItem key={mode.value} value={mode.value}>
-                      {mode.label_fa}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {errors.mode_shipment && (
-                <p className="text-xs text-destructive mt-2">{errors.mode_shipment}</p>
-              )}
+      <form onSubmit={handleSubmit}>
+        <CardContent className="space-y-6">
+          {errors.general && (
+            <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {errors.general}
             </div>
-            <div>
-              <Label htmlFor="incoterm_code_text">شرایط تحویل (اینکوترمز)</Label>
+          )}
+
+          {success && (
+            <div className="rounded-md border border-primary/40 bg-primary/10 px-3 py-2 text-sm text-primary">
+              درخواست شماره {success.shipment_request_id} با مهلت پاسخ‌گویی {success.sla_hours ?? 0} ساعته ثبت شد.
+            </div>
+          )}
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="mode">نحوه حمل *</Label>
               <Select
-                value={form.incoterm_code_text}
-                onValueChange={(value) => handleChange("incoterm_code_text", value)}
-                disabled={!form.mode_shipment || metaLoading.incoterms}
+                value={form.modeId}
+                onValueChange={(value) => updateField("modeId", value)}
+                disabled={modes.loading}
               >
-                <SelectTrigger id="incoterm_code_text">
-                  <SelectValue placeholder={incotermPlaceholder} />
+                <SelectTrigger id="mode">
+                  <SelectValue placeholder={modes.loading ? "در حال بارگذاری..." : "انتخاب کنید"} />
+                </SelectTrigger>
+              <SelectContent>
+                {modes.items.map((item) => (
+                  <SelectItem key={item.id} value={String(item.id)}>
+                    {item.name_fa ?? item.code}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {modes.loading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+            {modes.error && <p className="text-xs text-destructive">{modes.error}</p>}
+            {errors.modeId && <p className="text-xs text-destructive">{errors.modeId}</p>}
+          </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="incoterm">شرایط تحویل (اینکوترمز)</Label>
+              <Select
+                value={form.incotermCode}
+                onValueChange={(value) => updateField("incotermCode", value)}
+                disabled={incoterms.loading || !form.modeId}
+              >
+                <SelectTrigger id="incoterm">
+                  <SelectValue
+                    placeholder={
+                      !form.modeId
+                        ? "ابتدا نحوه حمل را انتخاب کنید"
+                        : incoterms.loading
+                          ? "در حال بارگذاری..."
+                          : "انتخاب کنید"
+                    }
+                  />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">بدون انتخاب</SelectItem>
-                  {incoterms.map((item) => (
+                  {incoterms.items.map((item) => (
                     <SelectItem key={item.id} value={item.code}>
-                      {item.code} ـ {item.name_fa ?? item.desc_fa ?? item.code}
+                      {item.name_fa ?? item.code}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
-              {errors.incoterm_code_text && (
-                <p className="text-xs text-destructive mt-2">{errors.incoterm_code_text}</p>
-              )}
+              {errors.incotermCode && <p className="text-xs text-destructive">{errors.incotermCode}</p>}
+              {incoterms.error && <p className="text-xs text-destructive">{incoterms.error}</p>}
             </div>
           </div>
 
-          <div className="flex flex-col md:flex-row gap-6">
-            <label className="flex items-center gap-2 text-sm">
-              <Checkbox
-                checked={form.is_hazfreight}
-                onCheckedChange={(checked) => handleCheckbox("is_hazfreight", checked)}
-              />
-              کالای خطرناک
-            </label>
-            <label className="flex items-center gap-2 text-sm">
-              <Checkbox
-                checked={form.is_refrigerated}
-                onCheckedChange={(checked) => handleCheckbox("is_refrigerated", checked)}
-              />
-              یخچالی
-            </label>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <Label htmlFor="commodity_name">نام کالا *</Label>
-              <Input
-                id="commodity_name"
-                value={form.commodity_name}
-                onChange={(event) => handleChange("commodity_name", event.target.value)}
-                placeholder="مثال: قطعات صنعتی"
-              />
-              {errors.commodity_name && (
-                <p className="text-xs text-destructive mt-2">{errors.commodity_name}</p>
-              )}
-            </div>
-            <div>
-              <Label htmlFor="hs_code_text">کد HS</Label>
-              <Input
-                id="hs_code_text"
-                value={form.hs_code_text}
-                onChange={(event) => handleChange("hs_code_text", event.target.value)}
-                placeholder="اختیاری"
-                className="ltr-input"
-              />
-              {errors.hs_code_text && (
-                <p className="text-xs text-destructive mt-2">{errors.hs_code_text}</p>
-              )}
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <Label htmlFor="package_type_text">نوع بسته‌بندی *</Label>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="package">نوع بسته‌بندی *</Label>
               <Select
-                value={form.package_type_text}
-                onValueChange={(value) => handleChange("package_type_text", value)}
-                disabled={metaLoading.packages}
+                value={form.packageId}
+                onValueChange={(value) => updateField("packageId", value)}
+                disabled={packages.loading}
               >
-                <SelectTrigger id="package_type_text">
-                  <SelectValue placeholder={packagePlaceholder} />
+                <SelectTrigger id="package">
+                  <SelectValue placeholder={packages.loading ? "در حال بارگذاری..." : "انتخاب کنید"} />
                 </SelectTrigger>
-                <SelectContent>
-                  {packages.map((item) => (
-                    <SelectItem key={item.value} value={item.value}>
-                      {item.label_fa}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {errors.package_type_text && (
-                <p className="text-xs text-destructive mt-2">{errors.package_type_text}</p>
-              )}
-            </div>
-            <div>
+              <SelectContent>
+                {packages.items.map((item) => (
+                  <SelectItem key={item.id} value={String(item.id)}>
+                    {item.name_fa ?? item.code}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {packages.loading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+            {packages.error && <p className="text-xs text-destructive">{packages.error}</p>}
+            {errors.packageId && <p className="text-xs text-destructive">{errors.packageId}</p>}
+          </div>
+
+            <div className="space-y-2">
               <Label htmlFor="units">تعداد *</Label>
               <Input
                 id="units"
-                type="number"
-                min={1}
+                inputMode="numeric"
                 value={form.units}
-                onChange={(event) => handleChange("units", event.target.value)}
+                onChange={(event) => updateField("units", event.target.value.replace(/[^0-9]/g, ""))}
+                placeholder="مثلاً 10"
               />
-              {errors.units && <p className="text-xs text-destructive mt-2">{errors.units}</p>}
+              {errors.units && <p className="text-xs text-destructive">{errors.units}</p>}
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
-              <Label htmlFor="length_cm">طول (سانتی‌متر)</Label>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="commodity">نام کالا *</Label>
               <Input
-                id="length_cm"
-                type="number"
-                min={0}
-                value={form.length_cm}
-                onChange={(event) => handleChange("length_cm", event.target.value)}
+                id="commodity"
+                value={form.commodityName}
+                maxLength={120}
+                onChange={(event) => updateField("commodityName", event.target.value)}
+                placeholder="مثلاً قطعات یدکی خودرو"
               />
-              {errors.length_cm && (
-                <p className="text-xs text-destructive mt-2">{errors.length_cm}</p>
-              )}
+              {errors.commodityName && <p className="text-xs text-destructive">{errors.commodityName}</p>}
             </div>
-            <div>
-              <Label htmlFor="width_cm">عرض (سانتی‌متر)</Label>
+
+            <div className="space-y-2">
+              <Label htmlFor="hs">HS کد</Label>
               <Input
-                id="width_cm"
-                type="number"
-                min={0}
-                value={form.width_cm}
-                onChange={(event) => handleChange("width_cm", event.target.value)}
+                id="hs"
+                value={form.hsCode}
+                maxLength={20}
+                onChange={(event) => updateField("hsCode", event.target.value)}
+                placeholder="مثلاً 8708.99.00"
               />
-              {errors.width_cm && (
-                <p className="text-xs text-destructive mt-2">{errors.width_cm}</p>
-              )}
-            </div>
-            <div>
-              <Label htmlFor="height_cm">ارتفاع (سانتی‌متر)</Label>
-              <Input
-                id="height_cm"
-                type="number"
-                min={0}
-                value={form.height_cm}
-                onChange={(event) => handleChange("height_cm", event.target.value)}
-              />
-              {errors.height_cm && (
-                <p className="text-xs text-destructive mt-2">{errors.height_cm}</p>
-              )}
+              {errors.hsCode && <p className="text-xs text-destructive">{errors.hsCode}</p>}
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <Label htmlFor="weight_kg">وزن (کیلوگرم)</Label>
+          <div className="grid gap-4 md:grid-cols-4">
+            <div className="space-y-2">
+              <Label htmlFor="length">طول (سانتی‌متر)</Label>
               <Input
-                id="weight_kg"
-                type="number"
-                min={0}
-                value={form.weight_kg}
-                onChange={(event) => handleChange("weight_kg", event.target.value)}
+                id="length"
+                value={form.length}
+                inputMode="decimal"
+                onChange={(event) => updateField("length", event.target.value)}
               />
-              {errors.weight_kg && (
-                <p className="text-xs text-destructive mt-2">{errors.weight_kg}</p>
-              )}
+              {errors.length && <p className="text-xs text-destructive">{errors.length}</p>}
             </div>
-            <div>
-              <Label htmlFor="volume_cbm">حجم (متر مکعب)</Label>
+            <div className="space-y-2">
+              <Label htmlFor="width">عرض (سانتی‌متر)</Label>
               <Input
-                id="volume_cbm"
-                type="number"
-                min={0}
-                value={volumeDisplay}
-                readOnly={volumeReadOnly}
-                onChange={(event) => {
-                  setVolumeManual(Boolean(event.target.value.trim()));
-                  handleChange("volume_cbm", event.target.value);
-                }}
+                id="width"
+                value={form.width}
+                inputMode="decimal"
+                onChange={(event) => updateField("width", event.target.value)}
               />
-              {volumeReadOnly && (
-                <p className="text-xs text-muted-foreground mt-2">
-                  حجم بر اساس ابعاد و تعداد محاسبه شده است.
-                </p>
+              {errors.width && <p className="text-xs text-destructive">{errors.width}</p>}
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="height">ارتفاع (سانتی‌متر)</Label>
+              <Input
+                id="height"
+                value={form.height}
+                inputMode="decimal"
+                onChange={(event) => updateField("height", event.target.value)}
+              />
+              {errors.height && <p className="text-xs text-destructive">{errors.height}</p>}
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="volume">حجم (مترمکعب)</Label>
+              <Input
+                id="volume"
+                value={volumeDisplay === "" ? "" : String(volumeDisplay)}
+                readOnly={computedVolume !== null}
+                inputMode="decimal"
+                onChange={(event) => updateField("volume", event.target.value)}
+                placeholder={computedVolume !== null ? String(computedVolume) : "مثلاً 0.48"}
+              />
+              {computedVolume !== null && (
+                <p className="text-xs text-muted-foreground">حجم بر اساس ابعاد و تعداد محاسبه شده است.</p>
               )}
-              {errors.volume_cbm && (
-                <p className="text-xs text-destructive mt-2">{errors.volume_cbm}</p>
-              )}
+              {errors.volume && <p className="text-xs text-destructive">{errors.volume}</p>}
             </div>
           </div>
 
-          <div>
-            <Label htmlFor="ready_date">تاریخ آماده‌بار</Label>
-            <Input
-              id="ready_date"
-              type="date"
-              value={form.ready_date}
-              onChange={(event) => handleChange("ready_date", event.target.value)}
-            />
-            {errors.ready_date && (
-              <p className="text-xs text-destructive mt-2">{errors.ready_date}</p>
-            )}
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="weight">وزن (کیلوگرم) *</Label>
+              <Input
+                id="weight"
+                value={form.weight}
+                inputMode="decimal"
+                onChange={(event) => updateField("weight", event.target.value)}
+                placeholder="مثلاً 200.5"
+              />
+              {errors.weight && <p className="text-xs text-destructive">{errors.weight}</p>}
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="readyDate">تاریخ آماده‌بار</Label>
+              <Input
+                id="readyDate"
+                type="date"
+                value={form.readyDate}
+                onChange={(event) => updateField("readyDate", event.target.value)}
+              />
+              {errors.readyDate && <p className="text-xs text-destructive">{errors.readyDate}</p>}
+            </div>
           </div>
 
-          <div className="space-y-4">
-            <div>
-              <Label htmlFor="contact_name">نام مخاطب *</Label>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="contactName">نام مخاطب *</Label>
               <Input
-                id="contact_name"
-                value={form.contact_name}
-                onChange={(event) => handleChange("contact_name", event.target.value)}
+                id="contactName"
+                value={form.contactName}
+                maxLength={80}
+                onChange={(event) => updateField("contactName", event.target.value)}
+                placeholder="نام و نام‌خانوادگی"
               />
-              {errors.contact_name && (
-                <p className="text-xs text-destructive mt-2">{errors.contact_name}</p>
-              )}
+              {errors.contactName && <p className="text-xs text-destructive">{errors.contactName}</p>}
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="contact_phone">تلفن همراه</Label>
-                <Input
-                  id="contact_phone"
-                  value={form.contact_phone}
-                  onChange={(event) => handleChange("contact_phone", event.target.value)}
-                  placeholder="09123456789"
-                  className="ltr-input"
-                />
-                {errors.contact_phone && (
-                  <p className="text-xs text-destructive mt-2">{errors.contact_phone}</p>
-                )}
+            <div className="space-y-2">
+              <Label htmlFor="contactPhone">شماره تماس</Label>
+              <Input
+                id="contactPhone"
+                value={form.contactPhone}
+                onChange={(event) => updateField("contactPhone", event.target.value)}
+                placeholder="09123456789"
+              />
+              {errors.contactPhone && <p className="text-xs text-destructive">{errors.contactPhone}</p>}
+            </div>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="contactEmail">ایمیل</Label>
+              <Input
+                id="contactEmail"
+                type="email"
+                value={form.contactEmail}
+                onChange={(event) => updateField("contactEmail", event.target.value)}
+                placeholder="user@example.com"
+              />
+              {errors.contactEmail && <p className="text-xs text-destructive">{errors.contactEmail}</p>}
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="note">یادداشت</Label>
+              <Textarea
+                id="note"
+                value={form.note}
+                maxLength={140}
+                onChange={(event) => updateField("note", event.target.value)}
+                placeholder="توضیح کوتاه"
+              />
+              <div className="flex items-center justify-between text-xs text-muted-foreground">
+                <span>حداکثر ۱۴۰ کاراکتر</span>
+                <span>{form.note.length}/140</span>
               </div>
-              <div>
-                <Label htmlFor="contact_email">ایمیل</Label>
-                <Input
-                  id="contact_email"
-                  value={form.contact_email}
-                  onChange={(event) => handleChange("contact_email", event.target.value)}
-                  placeholder="sample@mail.com"
-                  className="ltr-input"
-                />
-                {errors.contact_email && (
-                  <p className="text-xs text-destructive mt-2">{errors.contact_email}</p>
-                )}
-              </div>
+              {errors.note && <p className="text-xs text-destructive">{errors.note}</p>}
             </div>
           </div>
 
-          <div>
-            <Label htmlFor="note_text">یادداشت</Label>
-            <Textarea
-              id="note_text"
-              value={form.note_text}
-              onChange={(event) => handleChange("note_text", event.target.value.slice(0, 140))}
-              rows={3}
-              placeholder="توضیحات اضافی در مورد محموله"
-            />
-            <div className="flex items-center justify-between mt-1 text-xs text-muted-foreground">
-              <span>حداکثر ۱۴۰ کاراکتر</span>
-              <span className="persian-nums">{form.note_text.length}/140</span>
-            </div>
-            {errors.note_text && (
-              <p className="text-xs text-destructive mt-2">{errors.note_text}</p>
-            )}
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:gap-6">
+            <label className="flex items-center gap-2 text-sm font-medium">
+              <Checkbox
+                checked={form.isHazardous}
+                onCheckedChange={(checked) => updateField("isHazardous", Boolean(checked))}
+              />
+              کالای خطرناک است
+            </label>
+            <label className="flex items-center gap-2 text-sm font-medium">
+              <Checkbox
+                checked={form.isRefrigerated}
+                onCheckedChange={(checked) => updateField("isRefrigerated", Boolean(checked))}
+              />
+              نیاز به یخچال دارد
+            </label>
           </div>
-
-          <div className="space-y-3">
-            <Button type="submit" className="w-full" disabled={submitting} size="lg">
-              {submitting ? "در حال ارسال…" : "ارسال درخواست"}
-            </Button>
-            <div className="rounded-md border border-dashed p-3 text-xs text-muted-foreground flex items-center justify-between gap-3">
-              <span>در صورت نیاز می‌توانید تمام اطلاعات را ریست کرده و از ابتدا وارد کنید.</span>
-              <button type="button" className="text-xs underline" onClick={onResetAll}>
-                ریست مبدأ/مقصد و جزئیات
-              </button>
-            </div>
-          </div>
-        </form>
-      </CardContent>
+        </CardContent>
+        <CardFooter className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <p className="text-sm text-muted-foreground">
+            برای ارسال درخواست لازم است مبدأ، مقصد و فیلدهای الزامی فرم را تکمیل کنید.
+          </p>
+          <Button type="submit" disabled={!canSubmit}>
+            {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            ارسال درخواست
+          </Button>
+        </CardFooter>
+      </form>
     </Card>
   );
 };

@@ -11,8 +11,10 @@ from .db import db
 from .debug_routes import debug_bp
 from .geo_routes import geo_bp
 from .meta_routes import meta_bp
+from .catalog_routes import catalog_bp
 from .request_routes import req_bp
 from .utils.errors import json_error, register_error_handlers
+from .utils.setup import ensure_phase2_catalog
 
 
 def create_app() -> Flask:
@@ -29,6 +31,9 @@ def create_app() -> Flask:
     app.logger.info("DB (masked): %s", masked)
 
     db.init_app(app)
+
+    with app.app_context():
+        ensure_phase2_catalog()
 
     cors_setting = (app.config.get("CORS_ORIGIN") or "").strip()
     default_dev_origins = [
@@ -60,6 +65,7 @@ def create_app() -> Flask:
 
     app.register_blueprint(geo_bp, url_prefix="/api")
     app.register_blueprint(meta_bp, url_prefix="/api")
+    app.register_blueprint(catalog_bp, url_prefix="/api")
     app.register_blueprint(req_bp, url_prefix="/api")
     app.register_blueprint(debug_bp, url_prefix="/api")
 

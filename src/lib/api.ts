@@ -2,29 +2,56 @@ import {
   getCache,
   setCache,
   makeGeoKey,
-  clearCache,
   clearCacheByPrefix,
 } from "@/lib/cache";
 
 export const API_BASE = import.meta.env.VITE_API_BASE || "/api";
 
 async function getJSON<T>(url: string): Promise<T> {
-  const r = await fetch(url, { credentials: "omit" });
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
-  return r.json() as Promise<T>;
+  const response = await fetch(url, { credentials: "omit" });
+  if (!response.ok) {
+    const error = new Error(`HTTP ${response.status}`) as Error & {
+      status?: number;
+    };
+    error.status = response.status;
+    throw error;
+  }
+  return (await response.json()) as T;
 }
 
 async function postJSON<T>(url: string, body: unknown): Promise<T> {
-  const r = await fetch(url, {
+  const response = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!r.ok) {
-    const text = await r.text();
-    throw new Error(text || `HTTP ${r.status}`);
+
+  const raw = await response.text();
+  let data: unknown = null;
+  if (raw) {
+    try {
+      data = JSON.parse(raw);
+    } catch (err) {
+      if (response.ok) {
+        throw new Error("پاسخ نامعتبر از سرور دریافت شد.");
+      }
+      data = raw;
+    }
   }
-  return r.json() as Promise<T>;
+
+  if (!response.ok) {
+    const error = new Error(`HTTP ${response.status}`) as Error & {
+      status?: number;
+      payload?: unknown;
+      raw?: string | null;
+    };
+    error.status = response.status;
+    error.payload = data;
+    error.raw = raw;
+    throw error;
+  }
+
+  return (data as T) ?? ({} as T);
 }
 
 type ProvinceRow = { id: number; name_fa: string };
@@ -80,52 +107,36 @@ export const geoApi = {
   },
 };
 
-export type ModeOption = { value: string; label_fa: string };
-export type PackageTypeOption = { value: string; label_fa: string };
-export type IncotermOption = {
+export type CatalogItem = {
   id: number;
   code: string;
   name_fa: string | null;
-  desc_fa: string | null;
-  modes: string | null;
 };
 
-const META_PREFIX = "geo::meta";
-const META_MODES_KEY = `${META_PREFIX}::modes`;
-const META_PACKAGES_KEY = `${META_PREFIX}::packages`;
+export type CatalogResponse = {
+  items: CatalogItem[];
+  total: number;
+};
 
-const metaCacheKeyForIncoterms = (mode: string) =>
-  `${META_PREFIX}::incoterms::mode=${mode.toLowerCase()}`;
+const DEFAULT_CATALOG_LIMIT = 50;
+const CATALOG_CACHE_PREFIX = "geo::catalog";
 
-export const metaApi = {
-  async getModes() {
-    const cached = getCache<ModeOption[]>(META_MODES_KEY, "session");
-    if (cached) return cached;
-    const rows = await getJSON<ModeOption[]>(`${API_BASE}/meta/modes`);
-    setCache(META_MODES_KEY, rows, 15 * 60 * 1000, "session");
-    return rows;
-  },
-  async getPackageTypes() {
-    const cached = getCache<PackageTypeOption[]>(META_PACKAGES_KEY, "session");
-    if (cached) return cached;
-    const rows = await getJSON<PackageTypeOption[]>(`${API_BASE}/meta/package-types`);
-    setCache(META_PACKAGES_KEY, rows, 15 * 60 * 1000, "session");
-    return rows;
-  },
-  async getIncoterms(mode: string) {
-    const key = metaCacheKeyForIncoterms(mode);
-    const cached = getCache<IncotermOption[]>(key, "session");
-    if (cached) return cached;
-    const rows = await getJSON<IncotermOption[]>(
-      `${API_BASE}/meta/incoterms?mode=${encodeURIComponent(mode)}`,
-    );
-    setCache(key, rows, 15 * 60 * 1000, "session");
-    return rows;
-  },
-  clearGoodsMetaCache() {
-    clearCache(META_MODES_KEY, "session");
-    clearCache(META_PACKAGES_KEY, "session");
-    clearCacheByPrefix(`${META_PREFIX}::incoterms`, "session");
+function catalogUrl(path: string, q: string, limit: number) {
+  const params = new URLSearchParams();
+  if (q) params.set("q", q);
+  params.set("limit", String(limit));
+  return `${API_BASE}/catalog/${path}?${params.toString()}`;
+}
+
+export const catalogApi = {
+  shipmentModes: (q = "", limit = DEFAULT_CATALOG_LIMIT) =>
+    getJSON<CatalogResponse>(catalogUrl("shipment-modes", q, limit)),
+  incoterms: (q = "", limit = DEFAULT_CATALOG_LIMIT) =>
+    getJSON<CatalogResponse>(catalogUrl("incoterms", q, limit)),
+  packageTypes: (q = "", limit = DEFAULT_CATALOG_LIMIT) =>
+    getJSON<CatalogResponse>(catalogUrl("package-types", q, limit)),
+  clearCache() {
+    clearCacheByPrefix(CATALOG_CACHE_PREFIX, "session");
   },
 };
 
@@ -196,64 +207,46 @@ export const requestApi = {
     }),
 };
 
-export type ShipmentDraftPayload = {
-  mode_shipment: string;
-  incoterm_code_text?: string;
-  is_hazfreight?: boolean;
-  is_refrigerated?: boolean;
-  commodity_name: string;
-  hs_code_text?: string;
-  package_type_text: string;
+export type SubmitShipmentRequestPayload = {
+  origin_province_id: number;
+  origin_county_id: number;
+  origin_city_id: number;
+  dest_province_id: number;
+  dest_county_id: number;
+  dest_city_id: number;
+  mode_shipment_mode: number;
+  incoterm_code?: string | null;
+  package_type: number;
   units: number;
+  commodity_name: string;
+  hs_code?: string | null;
   length_cm?: number | null;
   width_cm?: number | null;
   height_cm?: number | null;
-  weight_kg?: number | null;
-  volume_cbm?: number | null;
-  ready_date?: string;
+  weight_kg: number;
+  volume_m3?: number | null;
+  ready_date?: string | null;
+  is_hazfreight?: boolean;
+  is_refrigerated?: boolean;
   contact_name: string;
-  contact_phone?: string;
-  contact_email?: string;
-  note_text?: string;
+  contact_phone?: string | null;
+  contact_email?: string | null;
+  note_text?: string | null;
 };
 
-export type ShipmentDraftResponse = {
-  ok: boolean;
-  volume_cbm: number;
-};
-
-export type ValidationErrorPayload = {
-  error?: string;
-  details?: { type?: string; fields?: Record<string, string> };
-  request_id?: string;
+export type SubmitShipmentResponse = {
+  request_id: string | null;
+  shipment_request_id: number;
+  sla_hours: number | null;
 };
 
 export const shipmentApi = {
-  async validateDraft(payload: ShipmentDraftPayload) {
-    const response = await fetch(`${API_BASE}/shipment/validate-draft`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
+  submit: (payload: SubmitShipmentRequestPayload) =>
+    postJSON<SubmitShipmentResponse>(`${API_BASE}/shipment-requests`, payload),
+};
 
-    const text = await response.text();
-    let data: ShipmentDraftResponse | ValidationErrorPayload | null = null;
-    if (text) {
-      try {
-        data = JSON.parse(text);
-      } catch {
-        data = null;
-      }
-    }
-
-    if (!response.ok) {
-      const error = new Error("VALIDATION_ERROR");
-      (error as Error & { status?: number; payload?: typeof data }).status =
-        response.status;
-      (error as Error & { status?: number; payload?: typeof data }).payload = data;
-      throw error;
-    }
-
-    return (data as ShipmentDraftResponse) ?? { ok: true, volume_cbm: 0 };
+export const catalogCache = {
+  clear() {
+    clearCacheByPrefix(CATALOG_CACHE_PREFIX, "session");
   },
 };

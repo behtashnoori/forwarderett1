@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from flask import Blueprint, current_app, jsonify, request
-
+import re
+from datetime import date, datetime, time
 from decimal import Decimal
+
+from flask import Blueprint, current_app, jsonify, request, g
 
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
@@ -41,6 +43,38 @@ _SHIPMENT_OPTIONAL_COLUMNS: dict[str, str] = {
 
 
 _columns_checked = False
+
+
+_PHONE_MOBILE_RE = re.compile(r"^0\d{10}$")
+_EMAIL_SIMPLE_RE = re.compile(r"^\S+@\S+\.\S+$")
+
+
+_LOCATION_MODELS = {
+    "origin_province_id": (Province, "استان مبدأ"),
+    "origin_county_id": (County, "شهرستان مبدأ"),
+    "origin_city_id": (City, "شهر مبدأ"),
+    "dest_province_id": (Province, "استان مقصد"),
+    "dest_county_id": (County, "شهرستان مقصد"),
+    "dest_city_id": (City, "شهر مقصد"),
+}
+
+
+def _catalog_by_id(table: str, id_: int) -> dict[str, object] | None:
+    sql = text(
+        f"SELECT id, code, name_fa FROM public.{table} WHERE id = :id LIMIT 1"
+    )
+    row = db.session.execute(sql, {"id": id_}).first()
+    return dict(row._mapping) if row else None
+
+
+def _incoterm_by_code(code: str) -> dict[str, object] | None:
+    sql = text(
+        "SELECT id, code, name_fa, modes FROM public.incoterm "
+        "WHERE UPPER(code) = :code LIMIT 1"
+    )
+    row = db.session.execute(sql, {"code": code.upper()}).first()
+    return dict(row._mapping) if row else None
+
 
 
 @req_bp.before_app_first_request
@@ -82,6 +116,66 @@ def _exists(model, id_):
     return (
         db.session.query(model.id).filter(model.id == id_).first() is not None
     )
+
+
+def _parse_required_int(
+    payload: dict,
+    field: str,
+    label: str,
+    errors: dict[str, str],
+    *,
+    minimum: int = 1,
+    maximum: int | None = None,
+) -> int | None:
+    value = payload.get(field)
+    if value in (None, ""):
+        errors[field] = f"{label} را انتخاب کنید."
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        errors[field] = f"{label} نامعتبر است."
+        return None
+    if parsed < minimum or (maximum is not None and parsed > maximum):
+        errors[field] = f"{label} نامعتبر است."
+        return None
+    return parsed
+
+
+def _parse_optional_float(
+    payload: dict,
+    field: str,
+    label: str,
+    errors: dict[str, str],
+    *,
+    minimum: float = 0.0,
+    maximum: float = 100_000.0,
+    required: bool = False,
+) -> float | None:
+    value = payload.get(field)
+    if value in (None, ""):
+        if required:
+            errors[field] = f"{label} الزامی است."
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        errors[field] = f"{label} باید عددی باشد."
+        return None
+    if parsed < minimum or parsed > maximum:
+        errors[field] = f"{label} باید بین {minimum} و {maximum} باشد."
+        return None
+    return parsed
+
+
+def _parse_boolean(payload: dict, field: str, errors: dict[str, str]) -> bool | None:
+    value = payload.get(field)
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    errors[field] = "مقدار باید بلی/خیر باشد."
+    return None
 
 
 def _geo_detail(model, id_):
@@ -140,6 +234,197 @@ def _request_payload(req: ShipmentRequest) -> dict[str, object]:
             "ready_at": req.ready_at.isoformat() if req.ready_at else None,
         },
     }
+
+
+
+@req_bp.post("/shipment-requests")
+def submit_shipment_request():
+    payload = request.get_json(silent=True) or {}
+    errors: dict[str, str] = {}
+
+    location_ids: dict[str, int] = {}
+    for field, (model, label) in _LOCATION_MODELS.items():
+        parsed = _parse_required_int(payload, field, label, errors)
+        if parsed is None:
+            continue
+        if not _exists(model, parsed):
+            errors[field] = f"{label} نامعتبر است."
+            continue
+        location_ids[field] = parsed
+
+    mode_row = None
+    mode_id = _parse_required_int(payload, "mode_shipment_mode", "نحوه حمل", errors)
+    if mode_id is not None:
+        mode_row = _catalog_by_id("shipment_mode", mode_id)
+        if not mode_row:
+            errors["mode_shipment_mode"] = "نحوه حمل انتخاب‌شده یافت نشد."
+
+    package_row = None
+    package_id = _parse_required_int(payload, "package_type", "نوع بسته‌بندی", errors)
+    if package_id is not None:
+        package_row = _catalog_by_id("package_type", package_id)
+        if not package_row:
+            errors["package_type"] = "نوع بسته‌بندی انتخاب‌شده یافت نشد."
+
+    incoterm_code_value = payload.get("incoterm_code")
+    incoterm_row = None
+    if incoterm_code_value:
+        if not isinstance(incoterm_code_value, str) or not incoterm_code_value.strip():
+            errors["incoterm_code"] = "کد اینکوترمز نامعتبر است."
+        else:
+            incoterm_row = _incoterm_by_code(incoterm_code_value.strip())
+            if not incoterm_row:
+                errors["incoterm_code"] = "کد اینکوترمز در فهرست موجود نیست."
+
+    is_hazardous = _parse_boolean(payload, "is_hazfreight", errors)
+    is_refrigerated = _parse_boolean(payload, "is_refrigerated", errors)
+
+    commodity_name = payload.get("commodity_name")
+    if not isinstance(commodity_name, str) or not commodity_name.strip():
+        errors["commodity_name"] = "نام کالا الزامی است."
+    elif len(commodity_name.strip()) > 120:
+        errors["commodity_name"] = "نام کالا نباید بیش از ۱۲۰ کاراکتر باشد."
+    else:
+        commodity_name = commodity_name.strip()
+
+    hs_code_value = payload.get("hs_code")
+    if hs_code_value is not None and hs_code_value != "":
+        if not isinstance(hs_code_value, str):
+            errors["hs_code"] = "کد HS نامعتبر است."
+        elif len(hs_code_value.strip()) > 20:
+            errors["hs_code"] = "کد HS نباید بیش از ۲۰ کاراکتر باشد."
+        else:
+            hs_code_value = hs_code_value.strip()
+    else:
+        hs_code_value = None
+
+    units = _parse_required_int(payload, "units", "تعداد", errors, minimum=1, maximum=999_999)
+
+    length_cm = _parse_optional_float(payload, "length_cm", "طول (سانتی‌متر)", errors)
+    width_cm = _parse_optional_float(payload, "width_cm", "عرض (سانتی‌متر)", errors)
+    height_cm = _parse_optional_float(payload, "height_cm", "ارتفاع (سانتی‌متر)", errors)
+
+    dims = [length_cm, width_cm, height_cm]
+    filled_dims = [d for d in dims if d is not None]
+    if filled_dims and len(filled_dims) != 3:
+        for field in ("length_cm", "width_cm", "height_cm"):
+            if payload.get(field) in (None, ""):
+                errors[field] = "برای ثبت ابعاد، هر سه مقدار را وارد کنید."
+
+    weight_kg = _parse_optional_float(payload, "weight_kg", "وزن (کیلوگرم)", errors, required=True)
+    volume_m3 = _parse_optional_float(payload, "volume_m3", "حجم (مترمکعب)", errors)
+
+    ready_date_value = None
+    ready_date_raw = payload.get("ready_date")
+    if ready_date_raw:
+        if not isinstance(ready_date_raw, str):
+            errors["ready_date"] = "تاریخ آماده‌بار نامعتبر است."
+        else:
+            try:
+                ready_date_value = datetime.strptime(ready_date_raw, "%Y-%m-%d").date()
+            except ValueError:
+                errors["ready_date"] = "تاریخ باید در قالب YYYY-MM-DD باشد."
+            else:
+                if ready_date_value < date.today():
+                    errors["ready_date"] = "تاریخ نمی‌تواند قبل از امروز باشد."
+
+    contact_name = payload.get("contact_name")
+    if not isinstance(contact_name, str) or not contact_name.strip():
+        errors["contact_name"] = "نام مخاطب الزامی است."
+    elif len(contact_name.strip()) > 80:
+        errors["contact_name"] = "نام مخاطب نباید بیش از ۸۰ کاراکتر باشد."
+    else:
+        contact_name = contact_name.strip()
+
+    contact_phone = payload.get("contact_phone")
+    if contact_phone:
+        if not isinstance(contact_phone, str):
+            errors["contact_phone"] = "شماره تماس نامعتبر است."
+        else:
+            contact_phone = contact_phone.strip()
+            if not _PHONE_MOBILE_RE.fullmatch(contact_phone):
+                errors["contact_phone"] = "شماره تماس باید با ۰ شروع شود و ۱۱ رقم باشد."
+    else:
+        contact_phone = None
+
+    contact_email = payload.get("contact_email")
+    if contact_email:
+        if not isinstance(contact_email, str):
+            errors["contact_email"] = "ایمیل نامعتبر است."
+        else:
+            contact_email = contact_email.strip()
+            if not _EMAIL_SIMPLE_RE.fullmatch(contact_email):
+                errors["contact_email"] = "ایمیل واردشده معتبر نیست."
+    else:
+        contact_email = None
+
+    note_text = payload.get("note_text")
+    if note_text is not None and note_text != "":
+        if not isinstance(note_text, str):
+            errors["note_text"] = "یادداشت نامعتبر است."
+        elif len(note_text) > 140:
+            errors["note_text"] = "یادداشت نباید بیش از ۱۴۰ کاراکتر باشد."
+        else:
+            note_text = note_text.strip()
+    else:
+        note_text = None
+
+    if errors:
+        return json_error(422, "لطفاً خطاهای فرم را برطرف کنید.", {"type": "ValidationError", "fields": errors})
+
+    if volume_m3 is None and units is not None and len(filled_dims) == 3:
+        cubic_cm = length_cm * width_cm * height_cm * units
+        volume_m3 = round(cubic_cm / 1_000_000, 3)
+
+    shipment = ShipmentRequest(
+        origin_province_id=location_ids.get("origin_province_id"),
+        origin_county_id=location_ids.get("origin_county_id"),
+        origin_city_id=location_ids.get("origin_city_id"),
+        dest_province_id=location_ids.get("dest_province_id"),
+        dest_county_id=location_ids.get("dest_county_id"),
+        dest_city_id=location_ids.get("dest_city_id"),
+        mode_shipment_mode=str(mode_row["id"]) if mode_row else None,
+        incoterm_code=(incoterm_row["code"].upper() if incoterm_row else None),
+        is_hazardous=bool(is_hazardous) if is_hazardous is not None else False,
+        is_refrigerated=bool(is_refrigerated) if is_refrigerated is not None else False,
+        commodity_name=commodity_name,
+        hs_code=hs_code_value,
+        package_type=str(package_row["id"]) if package_row else None,
+        units=units,
+        length_cm=length_cm,
+        width_cm=width_cm,
+        height_cm=height_cm,
+        weight_kg=weight_kg,
+        volume_m3=volume_m3,
+        ready_at=datetime.combine(ready_date_value, time.min) if ready_date_value else None,
+        contact_name=contact_name,
+        contact_phone=contact_phone,
+        contact_email=contact_email,
+        note_text=note_text,
+        status_request_status="NEW",
+    )
+    shipment.set_sla_due()
+    db.session.add(shipment)
+    db.session.commit()
+
+    current_app.logger.info(
+        "Shipment request created (id=%s, mode=%s, package=%s)",
+        shipment.id,
+        mode_row.get("code") if mode_row else None,
+        package_row.get("code") if package_row else None,
+    )
+
+    sla_hours = current_app.config.get("SLA_HOURS")
+    return (
+        jsonify(
+            {
+                "request_id": getattr(g, "request_id", None),
+                "shipment_request_id": shipment.id,
+                "sla_hours": int(sla_hours) if sla_hours is not None else None,
+            }
+        ),
+        201,
+    )
 
 
 @req_bp.post("/requests")

@@ -1,11 +1,11 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 import Layout from "@/components/Layout";
 import ProcessStepper from "@/components/ProcessStepper";
 import GoodsDetails from "@/components/GoodsDetails";
 import { CascadingSelect, GeoValue } from "@/components/CascadingSelect";
 import { Card, CardContent } from "@/components/ui/card";
-import { metaApi } from "@/lib/api";
+import { catalogCache } from "@/lib/api";
 
 const LandingPage = () => {
   const [originData, setOriginData] = useState<GeoValue>({});
@@ -32,24 +32,8 @@ const LandingPage = () => {
     setOriginData({});
     setDestinationData({});
     setGoodsResetKey((prev) => prev + 1);
-    metaApi.clearGoodsMetaCache();
+    catalogCache.clear();
   };
-
-  const selectedSummary = useMemo(() => {
-    if (!ready) return null;
-    return {
-      origin: {
-        province_id: originData.province_id,
-        county_id: originData.county_id,
-        city_id: originData.city_id,
-      },
-      destination: {
-        province_id: destinationData.province_id,
-        county_id: destinationData.county_id,
-        city_id: destinationData.city_id,
-      },
-    };
-  }, [destinationData, originData, ready]);
 
   return (
     <Layout>
@@ -88,16 +72,21 @@ const LandingPage = () => {
             </div>
           )}
 
-          {selectedSummary && (
-            <pre className="bg-muted/30 p-3 rounded-md text-xs overflow-auto">
-              {JSON.stringify(selectedSummary, null, 2)}
-            </pre>
+          {ready && (
+            <div className="rounded-md border border-muted-foreground/20 bg-muted/30 p-3 text-sm text-muted-foreground">
+              مبدأ و مقصد انتخاب شده‌اند. لطفاً جزئیات محموله را تکمیل کنید.
+            </div>
           )}
         </div>
 
         {ready && (
           <div className="max-w-5xl mx-auto mb-10">
-            <GoodsDetails resetKey={goodsResetKey} onResetAll={resetAll} />
+            <GoodsDetails
+              origin={originData}
+              destination={destinationData}
+              resetKey={goodsResetKey}
+              onResetAll={resetAll}
+            />
           </div>
         )}
       </div>
