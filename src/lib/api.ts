@@ -1,10 +1,29 @@
-import { getCache, setCache, makeGeoKey } from "@/lib/cache";
+import {
+  getCache,
+  setCache,
+  makeGeoKey,
+  clearCache,
+  clearCacheByPrefix,
+} from "@/lib/cache";
 
 export const API_BASE = import.meta.env.VITE_API_BASE || "/api";
 
 async function getJSON<T>(url: string): Promise<T> {
   const r = await fetch(url, { credentials: "omit" });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json() as Promise<T>;
+}
+
+async function postJSON<T>(url: string, body: unknown): Promise<T> {
+  const r = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const text = await r.text();
+    throw new Error(text || `HTTP ${r.status}`);
+  }
   return r.json() as Promise<T>;
 }
 
@@ -58,6 +77,55 @@ export const geoApi = {
     const rows = await getJSON<CityRow[]>(url);
     setCache(key, rows, 15 * 60 * 1000, "session");
     return rows;
+  },
+};
+
+export type ModeOption = { value: string; label_fa: string };
+export type PackageTypeOption = { value: string; label_fa: string };
+export type IncotermOption = {
+  id: number;
+  code: string;
+  name_fa: string | null;
+  desc_fa: string | null;
+  modes: string | null;
+};
+
+const META_PREFIX = "geo::meta";
+const META_MODES_KEY = `${META_PREFIX}::modes`;
+const META_PACKAGES_KEY = `${META_PREFIX}::packages`;
+
+const metaCacheKeyForIncoterms = (mode: string) =>
+  `${META_PREFIX}::incoterms::mode=${mode.toLowerCase()}`;
+
+export const metaApi = {
+  async getModes() {
+    const cached = getCache<ModeOption[]>(META_MODES_KEY, "session");
+    if (cached) return cached;
+    const rows = await getJSON<ModeOption[]>(`${API_BASE}/meta/modes`);
+    setCache(META_MODES_KEY, rows, 15 * 60 * 1000, "session");
+    return rows;
+  },
+  async getPackageTypes() {
+    const cached = getCache<PackageTypeOption[]>(META_PACKAGES_KEY, "session");
+    if (cached) return cached;
+    const rows = await getJSON<PackageTypeOption[]>(`${API_BASE}/meta/package-types`);
+    setCache(META_PACKAGES_KEY, rows, 15 * 60 * 1000, "session");
+    return rows;
+  },
+  async getIncoterms(mode: string) {
+    const key = metaCacheKeyForIncoterms(mode);
+    const cached = getCache<IncotermOption[]>(key, "session");
+    if (cached) return cached;
+    const rows = await getJSON<IncotermOption[]>(
+      `${API_BASE}/meta/incoterms?mode=${encodeURIComponent(mode)}`,
+    );
+    setCache(key, rows, 15 * 60 * 1000, "session");
+    return rows;
+  },
+  clearGoodsMetaCache() {
+    clearCache(META_MODES_KEY, "session");
+    clearCache(META_PACKAGES_KEY, "session");
+    clearCacheByPrefix(`${META_PREFIX}::incoterms`, "session");
   },
 };
 
@@ -126,4 +194,66 @@ export const requestApi = {
       if (!r.ok) throw new Error(await r.text());
       return r.json() as Promise<ShipmentRequestDetails>;
     }),
+};
+
+export type ShipmentDraftPayload = {
+  mode_shipment: string;
+  incoterm_code_text?: string;
+  is_hazfreight?: boolean;
+  is_refrigerated?: boolean;
+  commodity_name: string;
+  hs_code_text?: string;
+  package_type_text: string;
+  units: number;
+  length_cm?: number | null;
+  width_cm?: number | null;
+  height_cm?: number | null;
+  weight_kg?: number | null;
+  volume_cbm?: number | null;
+  ready_date?: string;
+  contact_name: string;
+  contact_phone?: string;
+  contact_email?: string;
+  note_text?: string;
+};
+
+export type ShipmentDraftResponse = {
+  ok: boolean;
+  volume_cbm: number;
+};
+
+export type ValidationErrorPayload = {
+  error?: string;
+  details?: { type?: string; fields?: Record<string, string> };
+  request_id?: string;
+};
+
+export const shipmentApi = {
+  async validateDraft(payload: ShipmentDraftPayload) {
+    const response = await fetch(`${API_BASE}/shipment/validate-draft`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    const text = await response.text();
+    let data: ShipmentDraftResponse | ValidationErrorPayload | null = null;
+    if (text) {
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = null;
+      }
+    }
+
+    if (!response.ok) {
+      const error = new Error("VALIDATION_ERROR");
+      (error as Error & { status?: number; payload?: typeof data }).status =
+        response.status;
+      (error as Error & { status?: number; payload?: typeof data }).payload = data;
+      throw error;
+    }
+
+    return (data as ShipmentDraftResponse) ?? { ok: true, volume_cbm: 0 };
+  },
 };
