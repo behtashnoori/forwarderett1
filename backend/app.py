@@ -10,8 +10,11 @@ from .config import Config
 from .db import db
 from .debug_routes import debug_bp
 from .geo_routes import geo_bp
+from .meta_routes import meta_bp
+from .catalog_routes import catalog_bp
 from .request_routes import req_bp
 from .utils.errors import json_error, register_error_handlers
+from .utils.setup import ensure_phase2_catalog
 
 
 def create_app() -> Flask:
@@ -29,7 +32,14 @@ def create_app() -> Flask:
 
     db.init_app(app)
 
-    cors_setting = (app.config.get("CORS_ORIGIN") or "").strip()
+    with app.app_context():
+        ensure_phase2_catalog()
+
+    cors_setting = (
+        app.config.get("CORS_ORIGINS")
+        or app.config.get("CORS_ORIGIN")
+        or ""
+    ).strip()
     default_dev_origins = [
         "http://localhost:5173",
         "http://localhost:8080",
@@ -37,6 +47,7 @@ def create_app() -> Flask:
         "http://localhost:8082",
         "http://localhost:8083",
         "http://localhost:8084",
+        "http://127.0.0.1:5173",
     ]
     if cors_setting == "*":
         resolved_origins: str | list[str] = "*"
@@ -58,6 +69,8 @@ def create_app() -> Flask:
     )
 
     app.register_blueprint(geo_bp, url_prefix="/api")
+    app.register_blueprint(meta_bp, url_prefix="/api")
+    app.register_blueprint(catalog_bp, url_prefix="/api")
     app.register_blueprint(req_bp, url_prefix="/api")
     app.register_blueprint(debug_bp, url_prefix="/api")
 
@@ -74,7 +87,7 @@ def create_app() -> Flask:
             app.logger.exception("Health check DB error: %s", exc)
             return json_error(500, "اتصال به پایگاه‌داده برقرار نیست.")
 
-        return {"ok": True}
+        return {"status": "ok"}
 
     return app
 

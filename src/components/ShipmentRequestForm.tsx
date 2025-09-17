@@ -23,7 +23,7 @@ interface ShipmentFormData {
   height_cm?: number;
   weight_kg?: number;
   volume_m3?: number;
-  ready_at: string;
+  ready_date: string;
   contact_name: string;
   contact_phone: string;
   contact_email: string;
@@ -55,7 +55,7 @@ const ShipmentRequestForm = ({
     units: 1,
     weight_kg: undefined,
     volume_m3: undefined,
-    ready_at: '',
+    ready_date: '',
     contact_name: '',
     contact_phone: '',
     contact_email: '',
@@ -371,12 +371,12 @@ const ShipmentRequestForm = ({
 
           {/* Ready date */}
           <div>
-            <Label htmlFor="ready_at">آماده بارگیری در</Label>
+            <Label htmlFor="ready_date">آماده بارگیری در</Label>
             <Input
-              id="ready_at"
+              id="ready_date"
               type="datetime-local"
-              value={formData.ready_at}
-              onChange={(e) => handleInputChange('ready_at', e.target.value)}
+              value={formData.ready_date}
+              onChange={(e) => handleInputChange('ready_date', e.target.value)}
             />
           </div>
 

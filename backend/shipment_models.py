@@ -16,20 +16,30 @@ class ShipmentRequest(db.Model):
     dest_county_id = db.Column(db.BigInteger, nullable=False)
     dest_city_id = db.Column(db.BigInteger, nullable=False)
 
-    ready_at = db.Column(db.DateTime(timezone=True))
-    mode_shipment_mode = db.Column(db.Text)
+    ready_date = db.Column(db.Date, nullable=True)
+    mode_shipment_mode = db.Column(db.BigInteger)
     incoterm_code = db.Column(db.Text)
-    is_hazardous = db.Column(db.Boolean)
-    is_refrigerated = db.Column(db.Boolean)
+    is_hazardous = db.Column(
+        db.Boolean,
+        nullable=False,
+        default=False,
+        server_default=db.text("false"),
+    )
+    is_refrigerated = db.Column(
+        db.Boolean,
+        nullable=False,
+        default=False,
+        server_default=db.text("false"),
+    )
     commodity_name = db.Column(db.Text)
     hs_code = db.Column(db.Text)
-    package_type = db.Column(db.Text)
+    package_type = db.Column(db.BigInteger)
     units = db.Column(db.Integer)
     length_cm = db.Column(db.Numeric(10, 2))
     width_cm = db.Column(db.Numeric(10, 2))
     height_cm = db.Column(db.Numeric(10, 2))
     weight_kg = db.Column(db.Numeric(10, 2))
-    volume_m3 = db.Column(db.Numeric(10, 2))
+    volume_m3 = db.Column(db.Numeric(12, 3))
     contact_name = db.Column(db.Text)
     contact_phone = db.Column(db.Text)
     contact_email = db.Column(db.Text)

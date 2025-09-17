@@ -1,4 +1,13 @@
-from flask import Blueprint, jsonify, request
+from __future__ import annotations
+
+import re
+from datetime import date
+from decimal import Decimal
+
+from flask import Blueprint, current_app, jsonify, request, g
+
+from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from .db import db
 from .geo_models import City, County, Province
@@ -9,15 +18,499 @@ from .utils.validators import valid_email, valid_note, valid_phone
 req_bp = Blueprint("req", __name__)
 
 
+_SHIPMENT_OPTIONAL_COLUMNS: dict[str, str] = {
+    "ready_date": "DATE",
+    "mode_shipment_mode": "BIGINT",
+    "incoterm_code": "TEXT",
+    "is_hazardous": "BOOLEAN NOT NULL DEFAULT false",
+    "is_refrigerated": "BOOLEAN NOT NULL DEFAULT false",
+    "commodity_name": "TEXT",
+    "hs_code": "TEXT",
+    "package_type": "BIGINT",
+    "units": "INTEGER",
+    "length_cm": "NUMERIC(10, 2)",
+    "width_cm": "NUMERIC(10, 2)",
+    "height_cm": "NUMERIC(10, 2)",
+    "weight_kg": "NUMERIC(10, 2)",
+    "volume_m3": "NUMERIC(12, 3)",
+    "contact_name": "TEXT",
+    "contact_phone": "TEXT",
+    "contact_email": "TEXT",
+    "note_text": "TEXT",
+    "sla_due_at": "TIMESTAMPTZ",
+    "requester_user_id": "BIGINT",
+}
+
+
+_columns_checked = False
+
+
+_PHONE_MOBILE_RE = re.compile(r"^0\d{10}$")
+_EMAIL_SIMPLE_RE = re.compile(r"^\S+@\S+\.\S+$")
+
+
+_LOCATION_MODELS = {
+    "origin_province_id": (Province, "استان مبدأ"),
+    "origin_county_id": (County, "شهرستان مبدأ"),
+    "origin_city_id": (City, "شهر مبدأ"),
+    "dest_province_id": (Province, "استان مقصد"),
+    "dest_county_id": (County, "شهرستان مقصد"),
+    "dest_city_id": (City, "شهر مقصد"),
+}
+
+
+def _as_bool(value, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        if value in (0, 1):
+            return bool(int(value))
+        return default
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in ("1", "true", "yes", "on"):  # true-ish values
+            return True
+        if normalized in ("0", "false", "no", "off", ""):  # false-ish values
+            return False
+    return default
+
+
+def _catalog_by_id(table: str, id_: int) -> dict[str, object] | None:
+    sql = text(
+        f"SELECT id, code, name_fa FROM public.{table} WHERE id = :id LIMIT 1"
+    )
+    row = db.session.execute(sql, {"id": id_}).first()
+    return dict(row._mapping) if row else None
+
+
+def _incoterm_by_code(code: str) -> dict[str, object] | None:
+    sql = text(
+        "SELECT id, code, name_fa, modes FROM public.incoterm "
+        "WHERE UPPER(code) = :code LIMIT 1"
+    )
+    row = db.session.execute(sql, {"code": code.upper()}).first()
+    return dict(row._mapping) if row else None
+
+
+
+def _ensure_optional_columns() -> None:
+    """Ensure optional shipment_request columns exist for older databases."""
+
+    global _columns_checked
+    if _columns_checked:
+        return
+
+    try:
+        with db.engine.begin() as conn:  # type: ignore[attr-defined]
+            table_exists = conn.execute(
+                text("SELECT to_regclass('public.shipment_request')")
+            ).scalar()
+            if not table_exists:
+                current_app.logger.warning(
+                    "shipment_request table missing; skipping optional column checks"
+                )
+                _columns_checked = True
+                return
+
+            for column_name, column_type in _SHIPMENT_OPTIONAL_COLUMNS.items():
+                ddl = (
+                    "ALTER TABLE shipment_request "
+                    f"ADD COLUMN IF NOT EXISTS {column_name} {column_type}"
+                )
+                conn.execute(text(ddl))
+    except SQLAlchemyError as exc:
+        current_app.logger.warning(
+            "Failed to ensure optional shipment_request columns: %s", exc
+        )
+    else:
+        _columns_checked = True
+
+
+def _register_optional_columns(setup_state) -> None:
+    app = setup_state.app
+    with app.app_context():
+        _ensure_optional_columns()
+
+
+req_bp.record_once(_register_optional_columns)
+
+
+
 def _exists(model, id_):
     return (
         db.session.query(model.id).filter(model.id == id_).first() is not None
     )
 
 
+def _parse_required_int(
+    payload: dict,
+    field: str,
+    label: str,
+    errors: dict[str, str],
+    *,
+    minimum: int = 1,
+    maximum: int | None = None,
+) -> int | None:
+    value = payload.get(field)
+    if value in (None, ""):
+        errors[field] = f"{label} را انتخاب کنید."
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        errors[field] = f"{label} نامعتبر است."
+        return None
+    if parsed < minimum or (maximum is not None and parsed > maximum):
+        errors[field] = f"{label} نامعتبر است."
+        return None
+    return parsed
+
+
+def _parse_optional_float(
+    payload: dict,
+    field: str,
+    label: str,
+    errors: dict[str, str],
+    *,
+    minimum: float = 0.0,
+    maximum: float = 100_000.0,
+    required: bool = False,
+) -> float | None:
+    value = payload.get(field)
+    if value in (None, ""):
+        if required:
+            errors[field] = f"{label} الزامی است."
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        errors[field] = f"{label} باید عددی باشد."
+        return None
+    if parsed < minimum or parsed > maximum:
+        errors[field] = f"{label} باید بین {minimum} و {maximum} باشد."
+        return None
+    return parsed
+
+
+def _parse_boolean(payload: dict, field: str, errors: dict[str, str]) -> bool | None:
+    value = payload.get(field)
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    errors[field] = "مقدار باید بلی/خیر باشد."
+    return None
+
+
+def _geo_detail(model, id_):
+    if not id_:
+        return None
+    row = db.session.get(model, id_)
+    if not row:
+        return None
+    return {"id": row.id, "name_fa": getattr(row, "name_fa", None)}
+
+
+def _decimal(value):
+    if value is None:
+        return None
+    if isinstance(value, Decimal):
+        return float(value)
+    return value
+
+
+def _request_payload(req: ShipmentRequest) -> dict[str, object]:
+    return {
+        "id": req.id,
+        "status": req.status_request_status,
+        "created_at": req.created_at.isoformat() if req.created_at else None,
+        "sla_due_at": req.sla_due_at.isoformat() if req.sla_due_at else None,
+        "origin": {
+            "province": _geo_detail(Province, req.origin_province_id),
+            "county": _geo_detail(County, req.origin_county_id),
+            "city": _geo_detail(City, req.origin_city_id),
+        },
+        "destination": {
+            "province": _geo_detail(Province, req.dest_province_id),
+            "county": _geo_detail(County, req.dest_county_id),
+            "city": _geo_detail(City, req.dest_city_id),
+        },
+        "contact": {
+            "name": req.contact_name,
+            "phone": req.contact_phone,
+            "email": req.contact_email,
+        },
+        "note_text": req.note_text,
+        "goods": {
+            "mode_shipment_mode": req.mode_shipment_mode,
+            "incoterm_code": req.incoterm_code,
+            "is_hazardous": req.is_hazardous,
+            "is_refrigerated": req.is_refrigerated,
+            "commodity_name": req.commodity_name,
+            "hs_code": req.hs_code,
+            "package_type": req.package_type,
+            "units": req.units,
+            "length_cm": _decimal(req.length_cm),
+            "width_cm": _decimal(req.width_cm),
+            "height_cm": _decimal(req.height_cm),
+            "weight_kg": _decimal(req.weight_kg),
+            "volume_m3": _decimal(req.volume_m3),
+            "ready_date": req.ready_date.isoformat() if req.ready_date else None,
+        },
+    }
+
+
+
+@req_bp.post("/shipment-requests")
+def submit_shipment_request():
+    payload = request.get_json(silent=True) or {}
+    errors: dict[str, str] = {}
+
+    location_ids: dict[str, int] = {}
+    for field, (model, label) in _LOCATION_MODELS.items():
+        parsed = _parse_required_int(payload, field, label, errors)
+        if parsed is None:
+            continue
+        if not _exists(model, parsed):
+            errors[field] = f"{label} نامعتبر است."
+            continue
+        location_ids[field] = parsed
+
+    shipment: ShipmentRequest | None = None
+    shipment_id_raw = payload.get("shipment_request_id")
+    if shipment_id_raw not in (None, ""):
+        try:
+            shipment_id_value = int(shipment_id_raw)
+            if shipment_id_value <= 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            errors["shipment_request_id"] = "شناسه درخواست نامعتبر است."
+        else:
+            shipment = db.session.get(ShipmentRequest, shipment_id_value)
+            if shipment is None:
+                errors["shipment_request_id"] = "شناسه درخواست یافت نشد."
+
+    mode_row = None
+    mode_id = _parse_required_int(payload, "mode_shipment_mode", "نحوه حمل", errors)
+    if mode_id is not None:
+        mode_row = _catalog_by_id("shipment_mode", mode_id)
+        if not mode_row:
+            errors["mode_shipment_mode"] = "نحوه حمل انتخاب‌شده یافت نشد."
+
+    package_row = None
+    package_id = _parse_required_int(payload, "package_type", "نوع بسته‌بندی", errors)
+    if package_id is not None:
+        package_row = _catalog_by_id("package_type", package_id)
+        if not package_row:
+            errors["package_type"] = "نوع بسته‌بندی انتخاب‌شده یافت نشد."
+
+    incoterm_code_value = payload.get("incoterm_code")
+    incoterm_row = None
+    if incoterm_code_value:
+        if not isinstance(incoterm_code_value, str) or not incoterm_code_value.strip():
+            errors["incoterm_code"] = "کد اینکوترمز نامعتبر است."
+        else:
+            incoterm_row = _incoterm_by_code(incoterm_code_value.strip())
+            if not incoterm_row:
+                errors["incoterm_code"] = "کد اینکوترمز در فهرست موجود نیست."
+
+    is_hazardous = _parse_boolean(payload, "is_hazfreight", errors)
+    is_refrigerated = _parse_boolean(payload, "is_refrigerated", errors)
+
+    commodity_name = payload.get("commodity_name")
+    if not isinstance(commodity_name, str) or not commodity_name.strip():
+        errors["commodity_name"] = "نام کالا الزامی است."
+    elif len(commodity_name.strip()) > 120:
+        errors["commodity_name"] = "نام کالا نباید بیش از ۱۲۰ کاراکتر باشد."
+    else:
+        commodity_name = commodity_name.strip()
+
+    hs_code_value = payload.get("hs_code")
+    if hs_code_value is not None and hs_code_value != "":
+        if not isinstance(hs_code_value, str):
+            errors["hs_code"] = "کد HS نامعتبر است."
+        elif len(hs_code_value.strip()) > 20:
+            errors["hs_code"] = "کد HS نباید بیش از ۲۰ کاراکتر باشد."
+        else:
+            hs_code_value = hs_code_value.strip()
+    else:
+        hs_code_value = None
+
+    units = _parse_required_int(payload, "units", "تعداد", errors, minimum=1, maximum=999_999)
+
+    length_cm = _parse_optional_float(payload, "length_cm", "طول (سانتی‌متر)", errors)
+    width_cm = _parse_optional_float(payload, "width_cm", "عرض (سانتی‌متر)", errors)
+    height_cm = _parse_optional_float(payload, "height_cm", "ارتفاع (سانتی‌متر)", errors)
+
+    dims = [length_cm, width_cm, height_cm]
+    filled_dims = [d for d in dims if d is not None]
+    if filled_dims and len(filled_dims) != 3:
+        for field in ("length_cm", "width_cm", "height_cm"):
+            if payload.get(field) in (None, ""):
+                errors[field] = "برای ثبت ابعاد، هر سه مقدار را وارد کنید."
+
+    weight_kg = _parse_optional_float(payload, "weight_kg", "وزن (کیلوگرم)", errors, required=True)
+    volume_m3 = _parse_optional_float(payload, "volume_m3", "حجم (مترمکعب)", errors)
+
+    ready_date_value: date | None = None
+    ready_date_raw = payload.get("ready_date")
+    if ready_date_raw in (None, ""):
+        ready_date_value = None
+    elif isinstance(ready_date_raw, str):
+        try:
+            ready_date_value = date.fromisoformat(ready_date_raw)
+        except ValueError:
+            return json_error(400, "تاریخ آمادگی معتبر نیست.")
+        if ready_date_value < date.today():
+            errors["ready_date"] = "تاریخ نمی‌تواند قبل از امروز باشد."
+    else:
+        return json_error(400, "تاریخ آمادگی معتبر نیست.")
+
+    contact_name = payload.get("contact_name")
+    if not isinstance(contact_name, str) or not contact_name.strip():
+        errors["contact_name"] = "نام مخاطب الزامی است."
+    elif len(contact_name.strip()) > 80:
+        errors["contact_name"] = "نام مخاطب نباید بیش از ۸۰ کاراکتر باشد."
+    else:
+        contact_name = contact_name.strip()
+
+    contact_phone = payload.get("contact_phone")
+    if contact_phone:
+        if not isinstance(contact_phone, str):
+            errors["contact_phone"] = "شماره تماس نامعتبر است."
+        else:
+            contact_phone = contact_phone.strip()
+            if not _PHONE_MOBILE_RE.fullmatch(contact_phone):
+                errors["contact_phone"] = "شماره تماس باید با ۰ شروع شود و ۱۱ رقم باشد."
+    else:
+        contact_phone = None
+
+    contact_email = payload.get("contact_email")
+    if contact_email:
+        if not isinstance(contact_email, str):
+            errors["contact_email"] = "ایمیل نامعتبر است."
+        else:
+            contact_email = contact_email.strip()
+            if not _EMAIL_SIMPLE_RE.fullmatch(contact_email):
+                errors["contact_email"] = "ایمیل واردشده معتبر نیست."
+    else:
+        contact_email = None
+
+    note_text = payload.get("note_text")
+    if note_text is not None and note_text != "":
+        if not isinstance(note_text, str):
+            errors["note_text"] = "یادداشت نامعتبر است."
+        elif len(note_text) > 140:
+            errors["note_text"] = "یادداشت نباید بیش از ۱۴۰ کاراکتر باشد."
+        else:
+            note_text = note_text.strip()
+    else:
+        note_text = None
+
+    status_payload = payload.get("status")
+    status_normalized = "submitted"
+    if status_payload not in (None, ""):
+        if isinstance(status_payload, str):
+            status_value = status_payload.strip().lower()
+            if status_value == "new":
+                status_normalized = "NEW"
+            elif status_value == "submitted":
+                status_normalized = "submitted"
+            else:
+                errors["status"] = "وضعیت نامعتبر است."
+        else:
+            errors["status"] = "وضعیت نامعتبر است."
+
+    if errors:
+        return json_error(422, "لطفاً خطاهای فرم را برطرف کنید.", {"type": "ValidationError", "fields": errors})
+
+    if volume_m3 is None and units is not None and len(filled_dims) == 3:
+        cubic_cm = length_cm * width_cm * height_cm * units
+        volume_m3 = round(cubic_cm / 1_000_000, 3)
+
+    is_new = shipment is None
+    if shipment is None:
+        shipment = ShipmentRequest(status_request_status="NEW")
+
+    shipment.origin_province_id = location_ids.get("origin_province_id")
+    shipment.origin_county_id = location_ids.get("origin_county_id")
+    shipment.origin_city_id = location_ids.get("origin_city_id")
+    shipment.dest_province_id = location_ids.get("dest_province_id")
+    shipment.dest_county_id = location_ids.get("dest_county_id")
+    shipment.dest_city_id = location_ids.get("dest_city_id")
+    shipment.mode_shipment_mode = mode_row["id"] if mode_row else None
+    shipment.incoterm_code = (
+        incoterm_row["code"].upper() if incoterm_row else None
+    )
+    shipment.is_hazardous = bool(is_hazardous) if is_hazardous is not None else False
+    shipment.is_refrigerated = (
+        bool(is_refrigerated) if is_refrigerated is not None else False
+    )
+    shipment.commodity_name = commodity_name
+    shipment.hs_code = hs_code_value
+    shipment.package_type = package_row["id"] if package_row else None
+    shipment.units = units
+    shipment.length_cm = length_cm
+    shipment.width_cm = width_cm
+    shipment.height_cm = height_cm
+    shipment.weight_kg = weight_kg
+    shipment.volume_m3 = volume_m3
+    shipment.ready_date = ready_date_value
+    shipment.contact_name = contact_name
+    shipment.contact_phone = contact_phone
+    shipment.contact_email = contact_email
+    shipment.note_text = note_text
+    shipment.status_request_status = status_normalized
+
+    if is_new:
+        shipment.set_sla_due()
+        db.session.add(shipment)
+    elif shipment.sla_due_at is None:
+        shipment.set_sla_due()
+
+    db.session.commit()
+
+    current_app.logger.info(
+        "Shipment request %s (id=%s, mode=%s, package=%s)",
+        "created" if is_new else "updated",
+        shipment.id,
+        mode_row.get("code") if mode_row else None,
+        package_row.get("code") if package_row else None,
+    )
+
+    sla_hours = current_app.config.get("SLA_HOURS")
+    status_code = 201 if is_new else 200
+    return (
+        jsonify(
+            {
+                "request_id": getattr(g, "request_id", None),
+                "shipment_request_id": shipment.id,
+                "sla_hours": int(sla_hours) if sla_hours is not None else None,
+            }
+        ),
+        status_code,
+    )
+
+
 @req_bp.post("/requests")
 def create_request():
     data = request.get_json(force=True, silent=True) or {}
+
+    status_raw = data.get("status")
+    status_normalized = "NEW"
+    if isinstance(status_raw, str):
+        status_value = status_raw.strip().lower()
+        if status_value == "submitted":
+            status_normalized = "submitted"
+        elif status_value == "new":
+            status_normalized = "NEW"
+    elif status_raw is not None:
+        current_app.logger.warning(
+            "Ignoring shipment_request status with invalid type: %r", status_raw
+        )
+
     required = [
         "origin_province_id",
         "origin_county_id",
@@ -59,6 +552,149 @@ def create_request():
     if email and not valid_email(email):
         return json_error(400, "قالب ایمیل نامعتبر است.")
 
+    ready_date_value: date | None = None
+    ready_date_raw = data.get("ready_date")
+    if ready_date_raw not in (None, ""):
+        if not isinstance(ready_date_raw, str):
+            return json_error(
+                400,
+                "فرمت تاریخ معتبر نیست. از YYYY-MM-DD استفاده کنید.",
+            )
+        try:
+            ready_date_value = date.fromisoformat(ready_date_raw)
+        except ValueError:
+            return json_error(
+                400,
+                "فرمت تاریخ معتبر نیست. از YYYY-MM-DD استفاده کنید.",
+            )
+
+    field_errors: dict[str, str] = {}
+
+    def _coerce_int(
+        field: str,
+        label: str,
+        *,
+        minimum: int | None = None,
+        required: bool = False,
+    ) -> int | None:
+        value = data.get(field)
+        if value in (None, ""):
+            if required:
+                field_errors[field] = f"{label} الزامی است."
+            return None
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            field_errors[field] = f"{label} نامعتبر است."
+            return None
+        if minimum is not None and parsed < minimum:
+            field_errors[field] = f"{label} نامعتبر است."
+            return None
+        return parsed
+
+    def _coerce_float(
+        field: str,
+        label: str,
+        *,
+        minimum: float = 0.0,
+    ) -> float | None:
+        value = data.get(field)
+        if value in (None, ""):
+            return None
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            field_errors[field] = f"{label} باید عددی باشد."
+            return None
+        if parsed < minimum:
+            field_errors[field] = f"{label} باید بزرگ‌تر یا برابر با {minimum} باشد."
+            return None
+        return parsed
+
+    require_goods = status_normalized == "submitted"
+
+    mode_id = _coerce_int(
+        "mode_shipment_mode",
+        "نحوه حمل",
+        minimum=1,
+        required=require_goods,
+    )
+    package_id = _coerce_int(
+        "package_type",
+        "نوع بسته‌بندی",
+        minimum=1,
+    )
+    units_value = _coerce_int(
+        "units",
+        "تعداد",
+        minimum=1,
+        required=require_goods,
+    )
+
+    length_value = _coerce_float("length_cm", "طول (سانتی‌متر)")
+    width_value = _coerce_float("width_cm", "عرض (سانتی‌متر)")
+    height_value = _coerce_float("height_cm", "ارتفاع (سانتی‌متر)")
+    weight_value = _coerce_float("weight_kg", "وزن (کیلوگرم)")
+    volume_value = _coerce_float("volume_m3", "حجم (مترمکعب)")
+
+    incoterm_code_raw = data.get("incoterm_code")
+    if incoterm_code_raw in (None, ""):
+        incoterm_code_value = None
+        if require_goods:
+            field_errors["incoterm_code"] = "کد اینکوترمز الزامی است."
+    elif not isinstance(incoterm_code_raw, str):
+        incoterm_code_value = None
+        field_errors["incoterm_code"] = "کد اینکوترمز نامعتبر است."
+    else:
+        incoterm_code_value = incoterm_code_raw.strip().upper()
+        if not incoterm_code_value:
+            incoterm_code_value = None
+            field_errors["incoterm_code"] = "کد اینکوترمز الزامی است."
+
+    commodity_name_raw = data.get("commodity_name")
+    if commodity_name_raw in (None, ""):
+        commodity_name_value = None
+        if require_goods:
+            field_errors["commodity_name"] = "نام کالا الزامی است."
+    elif not isinstance(commodity_name_raw, str):
+        commodity_name_value = None
+        field_errors["commodity_name"] = "نام کالا نامعتبر است."
+    else:
+        commodity_name_value = commodity_name_raw.strip()
+        if not commodity_name_value:
+            commodity_name_value = None
+            if require_goods:
+                field_errors["commodity_name"] = "نام کالا الزامی است."
+        elif len(commodity_name_value) > 120:
+            field_errors["commodity_name"] = "نام کالا نباید بیش از ۱۲۰ کاراکتر باشد."
+
+    hs_code_raw = data.get("hs_code")
+    if hs_code_raw in (None, ""):
+        hs_code_value = None
+    elif not isinstance(hs_code_raw, str):
+        hs_code_value = None
+        field_errors["hs_code"] = "کد HS نامعتبر است."
+    else:
+        hs_code_value = hs_code_raw.strip() or None
+        if hs_code_value and len(hs_code_value) > 20:
+            field_errors["hs_code"] = "کد HS نباید بیش از ۲۰ کاراکتر باشد."
+
+    if field_errors:
+        message = (
+            "فیلدهای الزامی برای ثبت نهایی ناقص است."
+            if require_goods
+            else "برخی فیلدها نامعتبر است."
+        )
+        return json_error(400, message, {"fields": field_errors})
+
+    is_hazardous = _as_bool(data.get("is_hazardous"), False)
+    is_refrigerated = _as_bool(data.get("is_refrigerated"), False)
+
+    contact_name_raw = data.get("contact_name")
+    contact_name_value = None
+    if isinstance(contact_name_raw, str):
+        contact_name_value = contact_name_raw.strip() or None
+
     req = ShipmentRequest(
         origin_province_id=data["origin_province_id"],
         origin_county_id=data["origin_county_id"],
@@ -66,15 +702,38 @@ def create_request():
         dest_province_id=data["dest_province_id"],
         dest_county_id=data["dest_county_id"],
         dest_city_id=data["dest_city_id"],
-        contact_name=data.get("contact_name"),
+        ready_date=ready_date_value,
+        mode_shipment_mode=mode_id,
+        incoterm_code=incoterm_code_value,
+        is_hazardous=is_hazardous,
+        is_refrigerated=is_refrigerated,
+        commodity_name=commodity_name_value,
+        hs_code=hs_code_value,
+        package_type=package_id,
+        units=units_value,
+        length_cm=length_value,
+        width_cm=width_value,
+        height_cm=height_value,
+        weight_kg=weight_value,
+        volume_m3=volume_value,
+        contact_name=contact_name_value,
         contact_phone=phone or None,
         contact_email=email or None,
         note_text=note or None,
-        status_request_status="NEW",
+        status_request_status=status_normalized,
     )
     req.set_sla_due()
     db.session.add(req)
-    db.session.commit()
+    try:
+        db.session.commit()
+    except IntegrityError as exc:
+        db.session.rollback()
+        current_app.logger.warning("Failed to create shipment request: %s", exc)
+        return json_error(
+            400,
+            "ذخیره درخواست به دلیل خطای یکپارچگی ممکن نشد.",
+            {"type": "IntegrityError"},
+        )
     return (
         jsonify(
             {
@@ -85,3 +744,12 @@ def create_request():
         ),
         201,
     )
+
+
+@req_bp.get("/requests/<int:request_id>")
+def get_request(request_id: int):
+    req = db.session.get(ShipmentRequest, request_id)
+    if req is None:
+        return json_error(404, "درخواست پیدا نشد.")
+
+    return jsonify(_request_payload(req))

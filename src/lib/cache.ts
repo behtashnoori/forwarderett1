@@ -51,3 +51,22 @@ export function makeGeoKey(endpoint: string, params: Record<string, unknown>) {
     .join("&");
   return `geo::${endpoint}${qp ? "::" + qp : ""}`;
 }
+
+export function clearCache(key: string, layer: CacheLayer = "session") {
+  const storage = getStorage(layer);
+  if (!storage) return;
+  storage.removeItem(key);
+}
+
+export function clearCacheByPrefix(prefix: string, layer: CacheLayer = "session") {
+  const storage = getStorage(layer);
+  if (!storage) return;
+  const keysToRemove: string[] = [];
+  for (let i = 0; i < storage.length; i += 1) {
+    const key = storage.key(i);
+    if (key && key.startsWith(prefix)) {
+      keysToRemove.push(key);
+    }
+  }
+  keysToRemove.forEach((key) => storage.removeItem(key));
+}

@@ -1,104 +1,166 @@
 import { useState } from "react";
+
 import Layout from "@/components/Layout";
 import ProcessStepper from "@/components/ProcessStepper";
-import { Card, CardContent } from "@/components/ui/card";
+import GoodsDetails from "@/components/GoodsDetails";
 import { CascadingSelect, GeoValue } from "@/components/CascadingSelect";
-import { requestApi, type ShipmentRequestResponse } from "@/lib/api";
+import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { useToast } from "@/hooks/use-toast";
+import { catalogCache, requestApi, type ShipmentRequestDetails } from "@/lib/api";
 
 const LandingPage = () => {
+  const { toast } = useToast();
   const [originData, setOriginData] = useState<GeoValue>({});
   const [destinationData, setDestinationData] = useState<GeoValue>({});
-  const [contact, setContact] = useState({
-    name: "",
-    phone: "",
-    email: "",
-    note: "",
-  });
-  const [submitting, setSubmitting] = useState(false);
-  const [result, setResult] = useState<ShipmentRequestResponse | null>(null);
+  const [goodsResetKey, setGoodsResetKey] = useState(0);
+  const [creatingRequest, setCreatingRequest] = useState(false);
+  const [requestDetails, setRequestDetails] = useState<ShipmentRequestDetails | null>(null);
+  const [requestError, setRequestError] = useState<string | null>(null);
 
   const isOriginComplete = Boolean(
-    originData.city_id && originData.county_id && originData.province_id
+    originData.city_id && originData.county_id && originData.province_id,
   );
   const isDestinationComplete = Boolean(
-    destinationData.city_id && destinationData.county_id && destinationData.province_id
+    destinationData.city_id && destinationData.county_id && destinationData.province_id,
   );
   const ready = isOriginComplete && isDestinationComplete;
 
+  const clearRequestState = () => {
+    setRequestDetails(null);
+    setRequestError(null);
+    setGoodsResetKey((prev) => prev + 1);
+  };
+
+  const parseErrorMessage = (error: unknown, fallback: string) => {
+    if (!error) return fallback;
+    if (error instanceof Error) {
+      const raw = error.message?.trim();
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw) as { error?: unknown };
+          if (parsed && typeof parsed.error === "string") {
+            return parsed.error;
+          }
+        } catch {
+          // ignore parsing failure, fall back to raw string
+        }
+        return raw;
+      }
+    }
+    if (typeof error === "string") {
+      const trimmed = error.trim();
+      if (!trimmed) return fallback;
+      try {
+        const parsed = JSON.parse(trimmed) as { error?: unknown };
+        if (parsed && typeof parsed.error === "string") {
+          return parsed.error;
+        }
+      } catch {
+        return trimmed;
+      }
+      return trimmed;
+    }
+    return fallback;
+  };
+
+  const fetchRequestDetails = async (id: number) => {
+    const fallback = "دریافت اطلاعات درخواست با خطا مواجه شد.";
+    try {
+      const details = await requestApi.get(id);
+      setRequestDetails(details);
+      setRequestError(null);
+      return details;
+    } catch (error) {
+      const message = parseErrorMessage(error, fallback);
+      setRequestError(message);
+      throw new Error(message);
+    }
+  };
+
   const handleOriginChange = (value: GeoValue) => {
-    setResult(null);
+    if (requestDetails) {
+      clearRequestState();
+    }
     setOriginData(value);
   };
 
   const handleDestinationChange = (value: GeoValue) => {
-    setResult(null);
+    if (requestDetails) {
+      clearRequestState();
+    }
     setDestinationData(value);
   };
 
-  const updateContact = (field: "name" | "phone" | "email" | "note", value: string) => {
-    setResult(null);
-    setContact((prev) => ({ ...prev, [field]: value }));
+  const handleCreateRequest = async () => {
+    if (!ready || creatingRequest) {
+      return;
+    }
+
+    setCreatingRequest(true);
+    setRequestError(null);
+    const fallback = "ثبت مبدأ و مقصد با خطا مواجه شد.";
+
+    try {
+      const response = await requestApi.create({
+        origin_province_id: originData.province_id!,
+        origin_county_id: originData.county_id!,
+        origin_city_id: originData.city_id!,
+        dest_province_id: destinationData.province_id!,
+        dest_county_id: destinationData.county_id!,
+        dest_city_id: destinationData.city_id!,
+      });
+
+      toast({
+        title: "مبدأ و مقصد ثبت شد.",
+        description: `شماره درخواست ${response.id} با وضعیت ${response.status} ایجاد شد.`,
+      });
+
+      await fetchRequestDetails(response.id);
+    } catch (error) {
+      const message = parseErrorMessage(error, fallback);
+      setRequestError(message);
+      toast({
+        title: "ثبت ناموفق بود.",
+        description: message,
+        variant: "destructive",
+      });
+    } finally {
+      setCreatingRequest(false);
+    }
+  };
+
+  const refreshCurrentRequest = async () => {
+    if (!requestDetails) {
+      return;
+    }
+    return fetchRequestDetails(requestDetails.id);
   };
 
   const resetAll = () => {
     setOriginData({});
     setDestinationData({});
-    setResult(null);
-    setContact({ name: "", phone: "", email: "", note: "" });
-  };
-
-  const submitRequest = async () => {
-    if (!ready || submitting) return;
-    setResult(null);
-    setSubmitting(true);
-    try {
-      const payload = {
-        origin_province_id: originData.province_id,
-        origin_county_id: originData.county_id,
-        origin_city_id: originData.city_id,
-        dest_province_id: destinationData.province_id,
-        dest_county_id: destinationData.county_id,
-        dest_city_id: destinationData.city_id,
-        contact_name: contact.name || undefined,
-        contact_phone: contact.phone || undefined,
-        contact_email: contact.email || undefined,
-        note_text: contact.note || undefined,
-      };
-      const response = await requestApi.create(payload);
-      setResult(response);
-    } catch (error) {
-      alert("خطا در ثبت درخواست");
-      console.error(error);
-    } finally {
-      setSubmitting(false);
-    }
+    clearRequestState();
+    setCreatingRequest(false);
+    catalogCache.clear();
   };
 
   return (
     <Layout>
       <div className="container mx-auto px-4 py-8">
-        {/* Hero Section */}
         <div className="text-center mb-12">
-          <h1 className="text-4xl font-bold mb-4 text-foreground">
-            درخواست حمل بار
-          </h1>
+          <h1 className="text-4xl font-bold mb-4 text-foreground">درخواست حمل بار</h1>
           <p className="text-xl text-muted-foreground max-w-2xl mx-auto">
             مبدأ و مقصد خود را انتخاب کرده و سپس جزئیات بار را وارد نمایید
           </p>
         </div>
 
-        {/* Process Stepper */}
         <ProcessStepper />
 
-        {/* Location Selectors */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
           <Card className="shadow-card">
             <CardContent className="p-6 space-y-4">
-              <CascadingSelect
-                label="مبدأ"
-                value={originData}
-                onChange={handleOriginChange}
-              />
+              <CascadingSelect label="مبدأ" value={originData} onChange={handleOriginChange} />
             </CardContent>
           </Card>
 
@@ -113,82 +175,56 @@ const LandingPage = () => {
           </Card>
         </div>
 
-        <div className="max-w-2xl mx-auto mb-8 space-y-4">
+        <div className="max-w-2xl mx-auto mb-10 space-y-4">
           {!ready && (
             <div className="rounded-md p-3 text-sm bg-muted/40">
-              لطفاً ابتدا مبدأ و مقصد را انتخاب کنید.
+              لطفاً ابتدا مبدأ و مقصد را انتخاب کنید تا فرم مشخصات کالا باز شود.
             </div>
           )}
 
-          <button
-            type="button"
-            onClick={resetAll}
-            className="text-xs underline"
-          >
-            ریست مبدأ/مقصد
-          </button>
-
-          {ready && (
-            <pre className="bg-muted/30 p-3 rounded-md text-xs overflow-auto">
-              {JSON.stringify(
-                {
-                  origin_province_id: originData.province_id,
-                  origin_county_id: originData.county_id,
-                  origin_city_id: originData.city_id,
-                  dest_province_id: destinationData.province_id,
-                  dest_county_id: destinationData.county_id,
-                  dest_city_id: destinationData.city_id,
-                },
-                null,
-                2
+          {ready && !requestDetails && (
+            <div className="space-y-4">
+              <div className="rounded-md border border-muted-foreground/20 bg-muted/30 p-3 text-sm text-muted-foreground">
+                برای ادامه، مبدأ و مقصد انتخاب‌شده را ثبت کنید تا فرم جزئیات کالا فعال شود.
+              </div>
+              {requestError && (
+                <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+                  {requestError}
+                </div>
               )}
-            </pre>
+              <div className="flex justify-center">
+                <Button onClick={handleCreateRequest} disabled={creatingRequest}>
+                  {creatingRequest ? "در حال ثبت..." : "ثبت مبدأ و مقصد"}
+                </Button>
+              </div>
+            </div>
           )}
 
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-            <input
-              placeholder="نام تماس"
-              value={contact.name}
-              onChange={(e) => updateContact("name", e.target.value)}
-              className="w-full"
-            />
-            <input
-              placeholder="تلفن"
-              value={contact.phone}
-              onChange={(e) => updateContact("phone", e.target.value)}
-              type="tel"
-              className="w-full"
-            />
-            <input
-              placeholder="ایمیل"
-              value={contact.email}
-              onChange={(e) => updateContact("email", e.target.value)}
-              type="email"
-              className="w-full"
-            />
-            <input
-              placeholder="یادداشت کوتاه"
-              value={contact.note}
-              onChange={(e) => updateContact("note", e.target.value)}
-              className="w-full"
-            />
-          </div>
-
-          <button
-            type="button"
-            disabled={!ready || submitting}
-            onClick={submitRequest}
-            className="mt-2 inline-flex items-center justify-center rounded-md border px-4 py-2 text-sm font-medium disabled:opacity-60"
-          >
-            {submitting ? "در حال ارسال…" : "ارسال درخواست"}
-          </button>
-
-          {result && (
-            <div className="mt-3 p-3 rounded-md bg-muted/30 text-sm">
-              درخواست شما با شماره <b>{result.id}</b> ثبت شد. تا ۲ ساعت آینده کارشناس بازرگانی با شما تماس خواهد گرفت.
+          {ready && requestDetails && (
+            <div className="space-y-3">
+              <div className="rounded-md border border-primary/30 bg-primary/10 p-3 text-sm text-primary">
+                درخواست شماره {requestDetails.id} ذخیره شد. لطفاً مشخصات کالا را تکمیل کنید.
+              </div>
+              {requestError && (
+                <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+                  {requestError}
+                </div>
+              )}
             </div>
           )}
         </div>
+
+        {ready && requestDetails && (
+          <div className="max-w-5xl mx-auto mb-10">
+            <GoodsDetails
+              requestId={requestDetails.id}
+              request={requestDetails}
+              resetKey={goodsResetKey}
+              onResetAll={resetAll}
+              onRefreshRequest={refreshCurrentRequest}
+            />
+          </div>
+        )}
       </div>
     </Layout>
   );
