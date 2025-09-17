@@ -31,11 +31,20 @@ VITE_API_BASE=http://127.0.0.1:5000/api
 ## اجرای بک‌اند
 
 ```bash
+# macOS / Linux
 python -m venv .venv
-source .venv/bin/activate           # ویندوز: .\.venv\Scripts\Activate.ps1
+source .venv/bin/activate
+pip install -r backend/requirements.txt
+flask --app backend.app run
+
+# Windows (PowerShell)
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
 pip install -r backend/requirements.txt
 flask --app backend.app run
 ```
+
+> 💡 اگر قبلاً محیط مجازی را ساخته و فعال کرده‌اید (پرامپت شما با ‎`(.venv)`‎ شروع می‌شود) نیازی به اجرای دوبارهٔ `python -m venv .venv` یا استفاده از `source` در PowerShell نیست.
 
 پس از اجرا، سرویس روی `http://127.0.0.1:5000` در دسترس است.
 
@@ -57,6 +66,10 @@ npm run dev
 ```
 
 سپس رابط روی `http://localhost:5173` در دسترس خواهد بود و درخواست‌ها را به بک‌اند (`VITE_API_BASE`) می‌فرستد.
+
+> ℹ️ اگر Vite روی پورت دیگری (مثلاً `http://localhost:8084`) اجرا شد، یا مقدار `CORS_ORIGIN` را در `backend/.env` مطابق Origin جدید تنظیم کنید (می‌توانید چند مقدار را با کاما جدا کنید، مانند `CORS_ORIGIN=http://localhost:8084,http://localhost:5173`) یا پورت dev را ثابت نگه دارید: `npm run dev -- --port 5173`.
+>
+> در هر صورت مقدار `VITE_API_BASE` باید روی `http://127.0.0.1:5000/api` باقی بماند تا درخواست‌ها به بک‌اند برسند.
 
 ## پذیرش
 
