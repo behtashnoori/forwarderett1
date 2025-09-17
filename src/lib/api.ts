@@ -12,6 +12,13 @@ type ProvinceRow = { id: number; name_fa: string };
 type CountyRow = { id: number; province_id: number; name_fa: string };
 type CityRow = { id: number; county_id: number; name_fa: string };
 
+export type GeoName = { id: number; name_fa: string | null } | null;
+export type LocationSummary = {
+  province: GeoName;
+  county: GeoName;
+  city: GeoName;
+};
+
 export const geoApi = {
   provinces: async (q = "", page = 1, limit = 50) => {
     const key = makeGeoKey("provinces", { q, page, limit });
@@ -73,6 +80,37 @@ export type ShipmentRequestResponse = {
   sla_due_at: string;
 };
 
+export type ShipmentRequestDetails = {
+  id: number;
+  status: string;
+  created_at: string | null;
+  sla_due_at: string | null;
+  origin: LocationSummary;
+  destination: LocationSummary;
+  contact: {
+    name: string | null;
+    phone: string | null;
+    email: string | null;
+  };
+  note_text: string | null;
+  goods: {
+    mode_shipment_mode: string | null;
+    incoterm_code: string | null;
+    is_hazardous: boolean | null;
+    is_refrigerated: boolean | null;
+    commodity_name: string | null;
+    hs_code: string | null;
+    package_type: string | null;
+    units: number | null;
+    length_cm: number | null;
+    width_cm: number | null;
+    height_cm: number | null;
+    weight_kg: number | null;
+    volume_m3: number | null;
+    ready_at: string | null;
+  };
+};
+
 export const requestApi = {
   create: (payload: CreateRequestPayload) =>
     fetch(`${API_BASE}/requests`, {
@@ -82,5 +120,10 @@ export const requestApi = {
     }).then(async (r) => {
       if (!r.ok) throw new Error(await r.text());
       return r.json() as Promise<ShipmentRequestResponse>;
+    }),
+  get: (id: number) =>
+    fetch(`${API_BASE}/requests/${id}`).then(async (r) => {
+      if (!r.ok) throw new Error(await r.text());
+      return r.json() as Promise<ShipmentRequestDetails>;
     }),
 };

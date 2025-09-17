@@ -1,4 +1,8 @@
+from __future__ import annotations
+
 from flask import Blueprint, jsonify, request
+
+from decimal import Decimal
 
 from .db import db
 from .geo_models import City, County, Province
@@ -13,6 +17,64 @@ def _exists(model, id_):
     return (
         db.session.query(model.id).filter(model.id == id_).first() is not None
     )
+
+
+def _geo_detail(model, id_):
+    if not id_:
+        return None
+    row = db.session.get(model, id_)
+    if not row:
+        return None
+    return {"id": row.id, "name_fa": getattr(row, "name_fa", None)}
+
+
+def _decimal(value):
+    if value is None:
+        return None
+    if isinstance(value, Decimal):
+        return float(value)
+    return value
+
+
+def _request_payload(req: ShipmentRequest) -> dict[str, object]:
+    return {
+        "id": req.id,
+        "status": req.status_request_status,
+        "created_at": req.created_at.isoformat() if req.created_at else None,
+        "sla_due_at": req.sla_due_at.isoformat() if req.sla_due_at else None,
+        "origin": {
+            "province": _geo_detail(Province, req.origin_province_id),
+            "county": _geo_detail(County, req.origin_county_id),
+            "city": _geo_detail(City, req.origin_city_id),
+        },
+        "destination": {
+            "province": _geo_detail(Province, req.dest_province_id),
+            "county": _geo_detail(County, req.dest_county_id),
+            "city": _geo_detail(City, req.dest_city_id),
+        },
+        "contact": {
+            "name": req.contact_name,
+            "phone": req.contact_phone,
+            "email": req.contact_email,
+        },
+        "note_text": req.note_text,
+        "goods": {
+            "mode_shipment_mode": req.mode_shipment_mode,
+            "incoterm_code": req.incoterm_code,
+            "is_hazardous": req.is_hazardous,
+            "is_refrigerated": req.is_refrigerated,
+            "commodity_name": req.commodity_name,
+            "hs_code": req.hs_code,
+            "package_type": req.package_type,
+            "units": req.units,
+            "length_cm": _decimal(req.length_cm),
+            "width_cm": _decimal(req.width_cm),
+            "height_cm": _decimal(req.height_cm),
+            "weight_kg": _decimal(req.weight_kg),
+            "volume_m3": _decimal(req.volume_m3),
+            "ready_at": req.ready_at.isoformat() if req.ready_at else None,
+        },
+    }
 
 
 @req_bp.post("/requests")
@@ -85,3 +147,12 @@ def create_request():
         ),
         201,
     )
+
+
+@req_bp.get("/requests/<int:request_id>")
+def get_request(request_id: int):
+    req = db.session.get(ShipmentRequest, request_id)
+    if req is None:
+        return json_error(404, "درخواست پیدا نشد.")
+
+    return jsonify(_request_payload(req))
