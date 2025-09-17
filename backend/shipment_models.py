@@ -19,8 +19,18 @@ class ShipmentRequest(db.Model):
     ready_date = db.Column(db.Date, nullable=True)
     mode_shipment_mode = db.Column(db.BigInteger)
     incoterm_code = db.Column(db.Text)
-    is_hazardous = db.Column(db.Boolean)
-    is_refrigerated = db.Column(db.Boolean)
+    is_hazardous = db.Column(
+        db.Boolean,
+        nullable=False,
+        default=False,
+        server_default=db.text("false"),
+    )
+    is_refrigerated = db.Column(
+        db.Boolean,
+        nullable=False,
+        default=False,
+        server_default=db.text("false"),
+    )
     commodity_name = db.Column(db.Text)
     hs_code = db.Column(db.Text)
     package_type = db.Column(db.BigInteger)

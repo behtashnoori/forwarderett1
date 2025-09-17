@@ -22,8 +22,8 @@ _SHIPMENT_OPTIONAL_COLUMNS: dict[str, str] = {
     "ready_date": "DATE",
     "mode_shipment_mode": "BIGINT",
     "incoterm_code": "TEXT",
-    "is_hazardous": "BOOLEAN",
-    "is_refrigerated": "BOOLEAN",
+    "is_hazardous": "BOOLEAN NOT NULL DEFAULT false",
+    "is_refrigerated": "BOOLEAN NOT NULL DEFAULT false",
     "commodity_name": "TEXT",
     "hs_code": "TEXT",
     "package_type": "BIGINT",
@@ -57,6 +57,24 @@ _LOCATION_MODELS = {
     "dest_county_id": (County, "شهرستان مقصد"),
     "dest_city_id": (City, "شهر مقصد"),
 }
+
+
+def _as_bool(value, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        if value in (0, 1):
+            return bool(int(value))
+        return default
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in ("1", "true", "yes", "on"):  # true-ish values
+            return True
+        if normalized in ("0", "false", "no", "off", ""):  # false-ish values
+            return False
+    return default
 
 
 def _catalog_by_id(table: str, id_: int) -> dict[str, object] | None:
@@ -521,6 +539,9 @@ def create_request():
                 "فرمت تاریخ معتبر نیست. از YYYY-MM-DD استفاده کنید.",
             )
 
+    is_hazardous = _as_bool(data.get("is_hazardous"), False)
+    is_refrigerated = _as_bool(data.get("is_refrigerated"), False)
+
     req = ShipmentRequest(
         origin_province_id=data["origin_province_id"],
         origin_county_id=data["origin_county_id"],
@@ -529,6 +550,8 @@ def create_request():
         dest_county_id=data["dest_county_id"],
         dest_city_id=data["dest_city_id"],
         ready_date=ready_date_value,
+        is_hazardous=is_hazardous,
+        is_refrigerated=is_refrigerated,
         contact_name=data.get("contact_name"),
         contact_phone=phone or None,
         contact_email=email or None,
