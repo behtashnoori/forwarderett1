@@ -5,7 +5,7 @@ from pathlib import Path
 from flask import current_app
 from sqlalchemy.exc import SQLAlchemyError
 
-from .db import db  # type: ignore[attr-defined]
+from ..db import db  # type: ignore[attr-defined]
 
 
 _PHASE2_PATH = Path(__file__).resolve().parent / "sql" / "phase2.sql"

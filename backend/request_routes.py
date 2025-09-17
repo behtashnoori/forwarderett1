@@ -505,6 +505,22 @@ def create_request():
     if email and not valid_email(email):
         return json_error(400, "قالب ایمیل نامعتبر است.")
 
+    ready_date_value: date | None = None
+    ready_date_raw = data.get("ready_date")
+    if ready_date_raw not in (None, ""):
+        if not isinstance(ready_date_raw, str):
+            return json_error(
+                400,
+                "فرمت تاریخ معتبر نیست. از YYYY-MM-DD استفاده کنید.",
+            )
+        try:
+            ready_date_value = date.fromisoformat(ready_date_raw)
+        except ValueError:
+            return json_error(
+                400,
+                "فرمت تاریخ معتبر نیست. از YYYY-MM-DD استفاده کنید.",
+            )
+
     req = ShipmentRequest(
         origin_province_id=data["origin_province_id"],
         origin_county_id=data["origin_county_id"],
@@ -512,6 +528,7 @@ def create_request():
         dest_province_id=data["dest_province_id"],
         dest_county_id=data["dest_county_id"],
         dest_city_id=data["dest_city_id"],
+        ready_date=ready_date_value,
         contact_name=data.get("contact_name"),
         contact_phone=phone or None,
         contact_email=email or None,
