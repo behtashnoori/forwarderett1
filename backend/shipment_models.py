@@ -16,7 +16,7 @@ class ShipmentRequest(db.Model):
     dest_county_id = db.Column(db.BigInteger, nullable=False)
     dest_city_id = db.Column(db.BigInteger, nullable=False)
 
-    ready_at = db.Column(db.DateTime(timezone=True))
+    ready_date = db.Column(db.Date, nullable=True)
     mode_shipment_mode = db.Column(db.Text)
     incoterm_code = db.Column(db.Text)
     is_hazardous = db.Column(db.Boolean)

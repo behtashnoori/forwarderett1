@@ -186,7 +186,7 @@ export type ShipmentRequestDetails = {
     height_cm: number | null;
     weight_kg: number | null;
     volume_m3: number | null;
-    ready_at: string | null;
+    ready_date: string | null;
   };
 };
 

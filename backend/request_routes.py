@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from datetime import date, datetime, time
+from datetime import date
 from decimal import Decimal
 
 from flask import Blueprint, current_app, jsonify, request, g
@@ -19,7 +19,7 @@ req_bp = Blueprint("req", __name__)
 
 
 _SHIPMENT_OPTIONAL_COLUMNS: dict[str, str] = {
-    "ready_at": "TIMESTAMPTZ",
+    "ready_date": "DATE",
     "mode_shipment_mode": "TEXT",
     "incoterm_code": "TEXT",
     "is_hazardous": "BOOLEAN",
@@ -231,7 +231,7 @@ def _request_payload(req: ShipmentRequest) -> dict[str, object]:
             "height_cm": _decimal(req.height_cm),
             "weight_kg": _decimal(req.weight_kg),
             "volume_m3": _decimal(req.volume_m3),
-            "ready_at": req.ready_at.isoformat() if req.ready_at else None,
+            "ready_date": req.ready_date.isoformat() if req.ready_date else None,
         },
     }
 
@@ -314,19 +314,19 @@ def submit_shipment_request():
     weight_kg = _parse_optional_float(payload, "weight_kg", "وزن (کیلوگرم)", errors, required=True)
     volume_m3 = _parse_optional_float(payload, "volume_m3", "حجم (مترمکعب)", errors)
 
-    ready_date_value = None
+    ready_date_value: date | None = None
     ready_date_raw = payload.get("ready_date")
-    if ready_date_raw:
-        if not isinstance(ready_date_raw, str):
-            errors["ready_date"] = "تاریخ آماده‌بار نامعتبر است."
-        else:
-            try:
-                ready_date_value = datetime.strptime(ready_date_raw, "%Y-%m-%d").date()
-            except ValueError:
-                errors["ready_date"] = "تاریخ باید در قالب YYYY-MM-DD باشد."
-            else:
-                if ready_date_value < date.today():
-                    errors["ready_date"] = "تاریخ نمی‌تواند قبل از امروز باشد."
+    if ready_date_raw in (None, ""):
+        ready_date_value = None
+    elif isinstance(ready_date_raw, str):
+        try:
+            ready_date_value = date.fromisoformat(ready_date_raw)
+        except ValueError:
+            return json_error(400, "تاریخ آمادگی معتبر نیست.")
+        if ready_date_value < date.today():
+            errors["ready_date"] = "تاریخ نمی‌تواند قبل از امروز باشد."
+    else:
+        return json_error(400, "تاریخ آمادگی معتبر نیست.")
 
     contact_name = payload.get("contact_name")
     if not isinstance(contact_name, str) or not contact_name.strip():
@@ -396,7 +396,7 @@ def submit_shipment_request():
         height_cm=height_cm,
         weight_kg=weight_kg,
         volume_m3=volume_m3,
-        ready_at=datetime.combine(ready_date_value, time.min) if ready_date_value else None,
+        ready_date=ready_date_value,
         contact_name=contact_name,
         contact_phone=contact_phone,
         contact_email=contact_email,

@@ -87,6 +87,7 @@ const GoodsDetails = ({ origin, destination, resetKey, onResetAll }: GoodsDetail
   const [errors, setErrors] = useState<FormErrors>({});
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState<SubmitShipmentResponse | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const lastModeRef = useRef<string>("");
 
   const modes = useShipmentModes();
@@ -97,6 +98,7 @@ const GoodsDetails = ({ origin, destination, resetKey, onResetAll }: GoodsDetail
     setForm(DEFAULT_FORM);
     setErrors({});
     setSuccess(null);
+    setSubmitError(null);
   }, [resetKey]);
 
   useEffect(() => {
@@ -310,10 +312,12 @@ const GoodsDetails = ({ origin, destination, resetKey, onResetAll }: GoodsDetail
 
     setSubmitting(true);
     setErrors({});
+    setSubmitError(null);
 
     try {
       const response = await shipmentApi.submit(payload);
       setSuccess(response);
+      setSubmitError(null);
       toast({
         title: "درخواست با موفقیت ثبت شد.",
         description: `شماره پیگیری ${response.shipment_request_id} با SLA ${
@@ -322,9 +326,28 @@ const GoodsDetails = ({ origin, destination, resetKey, onResetAll }: GoodsDetail
       });
       setForm(DEFAULT_FORM);
     } catch (error) {
-      const err = error as Error & { status?: number; payload?: unknown };
+      const err = error as Error & {
+        status?: number;
+        payload?: unknown;
+        raw?: string | null;
+      };
+
+      let message = "ارسال درخواست با خطا مواجه شد.";
+      let requestId: string | undefined;
+
       if (err.payload && typeof err.payload === "object" && err.payload !== null) {
-        const details = (err.payload as { details?: { fields?: Record<string, string> } }).details;
+        const payloadObj = err.payload as {
+          error?: string;
+          details?: { fields?: Record<string, string> };
+          request_id?: string;
+        };
+        if (typeof payloadObj.error === "string" && payloadObj.error.trim()) {
+          message = payloadObj.error.trim();
+        }
+        if (typeof payloadObj.request_id === "string" && payloadObj.request_id) {
+          requestId = payloadObj.request_id;
+        }
+        const details = payloadObj.details;
         if (details?.fields) {
           const serverErrors: FormErrors = {};
           Object.entries(details.fields).forEach(([key, value]) => {
@@ -348,10 +371,20 @@ const GoodsDetails = ({ origin, destination, resetKey, onResetAll }: GoodsDetail
           });
           setErrors(serverErrors);
         }
+      } else if (typeof err.payload === "string" && err.payload.trim()) {
+        message = err.payload.trim();
+      } else if (typeof err.raw === "string" && err.raw.trim()) {
+        message = err.raw.trim();
       }
+
+      const composedMessage = requestId
+        ? `${message} (کد پیگیری: ${requestId})`
+        : message;
+      setSubmitError(composedMessage);
+
       toast({
         title: "ثبت درخواست ناموفق بود.",
-        description: "لطفاً خطاهای نمایش‌داده‌شده را بررسی کنید.",
+        description: composedMessage,
         variant: "destructive",
       });
     } finally {
@@ -647,10 +680,15 @@ const GoodsDetails = ({ origin, destination, resetKey, onResetAll }: GoodsDetail
           <p className="text-sm text-muted-foreground">
             برای ارسال درخواست لازم است مبدأ، مقصد و فیلدهای الزامی فرم را تکمیل کنید.
           </p>
-          <Button type="submit" disabled={!canSubmit}>
-            {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            ارسال درخواست
-          </Button>
+          <div className="flex w-full flex-col items-stretch gap-2 md:w-auto md:items-end">
+            {submitError && (
+              <span className="text-sm text-destructive text-right">{submitError}</span>
+            )}
+            <Button type="submit" disabled={!canSubmit}>
+              {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              ارسال درخواست
+            </Button>
+          </div>
         </CardFooter>
       </form>
     </Card>
