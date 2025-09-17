@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, current_app, jsonify, request
 
 from decimal import Decimal
+
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 
 from .db import db
 from .geo_models import City, County, Province
@@ -11,6 +14,68 @@ from .utils.errors import json_error
 from .utils.validators import valid_email, valid_note, valid_phone
 
 req_bp = Blueprint("req", __name__)
+
+
+_SHIPMENT_OPTIONAL_COLUMNS: dict[str, str] = {
+    "ready_at": "TIMESTAMPTZ",
+    "mode_shipment_mode": "TEXT",
+    "incoterm_code": "TEXT",
+    "is_hazardous": "BOOLEAN",
+    "is_refrigerated": "BOOLEAN",
+    "commodity_name": "TEXT",
+    "hs_code": "TEXT",
+    "package_type": "TEXT",
+    "units": "INTEGER",
+    "length_cm": "NUMERIC(10, 2)",
+    "width_cm": "NUMERIC(10, 2)",
+    "height_cm": "NUMERIC(10, 2)",
+    "weight_kg": "NUMERIC(10, 2)",
+    "volume_m3": "NUMERIC(10, 2)",
+    "contact_name": "TEXT",
+    "contact_phone": "TEXT",
+    "contact_email": "TEXT",
+    "note_text": "TEXT",
+    "sla_due_at": "TIMESTAMPTZ",
+    "requester_user_id": "BIGINT",
+}
+
+
+_columns_checked = False
+
+
+@req_bp.before_app_first_request
+def _ensure_optional_columns() -> None:
+    """Ensure optional shipment_request columns exist for older databases."""
+
+    global _columns_checked
+    if _columns_checked:
+        return
+
+    try:
+        with db.engine.begin() as conn:  # type: ignore[attr-defined]
+            table_exists = conn.execute(
+                text("SELECT to_regclass('public.shipment_request')")
+            ).scalar()
+            if not table_exists:
+                current_app.logger.warning(
+                    "shipment_request table missing; skipping optional column checks"
+                )
+                _columns_checked = True
+                return
+
+            for column_name, column_type in _SHIPMENT_OPTIONAL_COLUMNS.items():
+                ddl = (
+                    "ALTER TABLE shipment_request "
+                    f"ADD COLUMN IF NOT EXISTS {column_name} {column_type}"
+                )
+                conn.execute(text(ddl))
+    except SQLAlchemyError as exc:
+        current_app.logger.warning(
+            "Failed to ensure optional shipment_request columns: %s", exc
+        )
+    else:
+        _columns_checked = True
+
 
 
 def _exists(model, id_):
