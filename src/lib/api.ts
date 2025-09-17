@@ -208,6 +208,7 @@ export const requestApi = {
 };
 
 export type SubmitShipmentRequestPayload = {
+  shipment_request_id?: number;
   origin_province_id: number;
   origin_county_id: number;
   origin_city_id: number;

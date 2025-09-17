@@ -18,16 +18,17 @@ import { useToast } from "@/hooks/use-toast";
 import { useIncoterms, usePackageTypes, useShipmentModes } from "@/hooks/useCatalog";
 import {
   shipmentApi,
+  type ShipmentRequestDetails,
   type SubmitShipmentRequestPayload,
   type SubmitShipmentResponse,
 } from "@/lib/api";
-import type { GeoValue } from "./CascadingSelect";
 
 type GoodsDetailsProps = {
-  origin: GeoValue;
-  destination: GeoValue;
+  requestId: number;
+  request: ShipmentRequestDetails;
   resetKey: number;
   onResetAll: () => void;
+  onRefreshRequest?: () => Promise<ShipmentRequestDetails | void>;
 };
 
 type GoodsFormState = {
@@ -79,11 +80,41 @@ const DEFAULT_FORM: GoodsFormState = {
 const PHONE_RE = /^0\d{10}$/;
 const EMAIL_RE = /^\S+@\S+\.\S+$/;
 
-const GoodsDetails = ({ origin, destination, resetKey, onResetAll }: GoodsDetailsProps) => {
+function mapRequestToForm(request: ShipmentRequestDetails): GoodsFormState {
+  const { goods, contact, note_text } = request;
+  return {
+    modeId: goods.mode_shipment_mode ? String(goods.mode_shipment_mode) : "",
+    incotermCode: goods.incoterm_code ?? "",
+    packageId: goods.package_type ? String(goods.package_type) : "",
+    isHazardous: Boolean(goods.is_hazardous ?? false),
+    isRefrigerated: Boolean(goods.is_refrigerated ?? false),
+    commodityName: goods.commodity_name ?? "",
+    hsCode: goods.hs_code ?? "",
+    units: goods.units != null ? String(goods.units) : "",
+    length: goods.length_cm != null ? String(goods.length_cm) : "",
+    width: goods.width_cm != null ? String(goods.width_cm) : "",
+    height: goods.height_cm != null ? String(goods.height_cm) : "",
+    weight: goods.weight_kg != null ? String(goods.weight_kg) : "",
+    volume: goods.volume_m3 != null ? String(goods.volume_m3) : "",
+    readyDate: goods.ready_date ?? "",
+    contactName: contact.name ?? "",
+    contactPhone: contact.phone ?? "",
+    contactEmail: contact.email ?? "",
+    note: note_text ?? "",
+  };
+}
+
+const GoodsDetails = ({
+  requestId,
+  request,
+  resetKey,
+  onResetAll,
+  onRefreshRequest,
+}: GoodsDetailsProps) => {
   const { toast } = useToast();
   const containerRef = useRef<HTMLDivElement | null>(null);
 
-  const [form, setForm] = useState<GoodsFormState>(DEFAULT_FORM);
+  const [form, setForm] = useState<GoodsFormState>(() => mapRequestToForm(request));
   const [errors, setErrors] = useState<FormErrors>({});
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState<SubmitShipmentResponse | null>(null);
@@ -93,12 +124,19 @@ const GoodsDetails = ({ origin, destination, resetKey, onResetAll }: GoodsDetail
   const modes = useShipmentModes();
   const packages = usePackageTypes();
   const incoterms = useIncoterms();
+  const originSummary = request.origin;
+  const destinationSummary = request.destination;
 
   useEffect(() => {
-    setForm(DEFAULT_FORM);
+    setForm(mapRequestToForm(request));
     setErrors({});
+    setSubmitError(null);
+  }, [request]);
+
+  useEffect(() => {
     setSuccess(null);
     setSubmitError(null);
+    setErrors({});
   }, [resetKey]);
 
   useEffect(() => {
@@ -142,13 +180,33 @@ const GoodsDetails = ({ origin, destination, resetKey, onResetAll }: GoodsDetail
   }, [form.height, form.length, form.units, form.volume, form.width]);
 
   const isGeoComplete = Boolean(
-    origin.province_id &&
-      origin.county_id &&
-      origin.city_id &&
-      destination.province_id &&
-      destination.county_id &&
-      destination.city_id,
+    originSummary.province?.id &&
+      originSummary.county?.id &&
+      originSummary.city?.id &&
+      destinationSummary.province?.id &&
+      destinationSummary.county?.id &&
+      destinationSummary.city?.id,
   );
+
+  const originProvinceId = originSummary.province?.id ?? null;
+  const originCountyId = originSummary.county?.id ?? null;
+  const originCityId = originSummary.city?.id ?? null;
+  const destinationProvinceId = destinationSummary.province?.id ?? null;
+  const destinationCountyId = destinationSummary.county?.id ?? null;
+  const destinationCityId = destinationSummary.city?.id ?? null;
+
+  const formatLocation = (summary: typeof originSummary) => {
+    const names = [
+      summary.city?.name_fa,
+      summary.county?.name_fa,
+      summary.province?.name_fa,
+    ].filter(Boolean);
+    return names.length > 0 ? names.join("، ") : "نامشخص";
+  };
+
+  const slaDueAtText = request.sla_due_at
+    ? new Date(request.sla_due_at).toLocaleString("fa-IR")
+    : null;
 
   const requiredFilled = Boolean(
     form.modeId &&
@@ -268,10 +326,14 @@ const GoodsDetails = ({ origin, destination, resetKey, onResetAll }: GoodsDetail
       }
     }
 
-    if (!origin.province_id || !origin.county_id || !origin.city_id) {
+    if (!originProvinceId || !originCountyId || !originCityId) {
       nextErrors.general = "مبدأ را کامل انتخاب کنید.";
     }
-    if (!destination.province_id || !destination.county_id || !destination.city_id) {
+    if (
+      !destinationProvinceId ||
+      !destinationCountyId ||
+      !destinationCityId
+    ) {
       nextErrors.general = nextErrors.general
         ? `${nextErrors.general} مقصد را نیز کامل انتخاب کنید.`
         : "مقصد را کامل انتخاب کنید.";
@@ -283,12 +345,13 @@ const GoodsDetails = ({ origin, destination, resetKey, onResetAll }: GoodsDetail
     }
 
     const payload: SubmitShipmentRequestPayload = {
-      origin_province_id: origin.province_id!,
-      origin_county_id: origin.county_id!,
-      origin_city_id: origin.city_id!,
-      dest_province_id: destination.province_id!,
-      dest_county_id: destination.county_id!,
-      dest_city_id: destination.city_id!,
+      shipment_request_id: requestId,
+      origin_province_id: originProvinceId!,
+      origin_county_id: originCountyId!,
+      origin_city_id: originCityId!,
+      dest_province_id: destinationProvinceId!,
+      dest_county_id: destinationCountyId!,
+      dest_city_id: destinationCityId!,
       mode_shipment_mode: modeId,
       package_type: packageId,
       units,
@@ -324,7 +387,21 @@ const GoodsDetails = ({ origin, destination, resetKey, onResetAll }: GoodsDetail
           response.sla_hours ?? 0
         } ساعت ثبت شد.`,
       });
-      setForm(DEFAULT_FORM);
+      if (onRefreshRequest) {
+        try {
+          await onRefreshRequest();
+        } catch (refreshError) {
+          const message =
+            refreshError instanceof Error && refreshError.message
+              ? refreshError.message
+              : "بروزرسانی اطلاعات درخواست با خطا مواجه شد.";
+          toast({
+            title: "بروزرسانی ناموفق بود.",
+            description: message,
+            variant: "destructive",
+          });
+        }
+      }
     } catch (error) {
       const err = error as Error & {
         status?: number;
@@ -404,6 +481,13 @@ const GoodsDetails = ({ origin, destination, resetKey, onResetAll }: GoodsDetail
       </CardHeader>
       <form onSubmit={handleSubmit}>
         <CardContent className="space-y-6">
+          <div className="grid gap-1 rounded-md border border-muted-foreground/20 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+            <div className="font-medium text-foreground">شماره درخواست: {requestId}</div>
+            <div>مبدأ: {formatLocation(originSummary)}</div>
+            <div>مقصد: {formatLocation(destinationSummary)}</div>
+            {slaDueAtText && <div>موعد پاسخ‌گویی: {slaDueAtText}</div>}
+          </div>
+
           {errors.general && (
             <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
               {errors.general}

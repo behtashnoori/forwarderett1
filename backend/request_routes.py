@@ -252,6 +252,20 @@ def submit_shipment_request():
             continue
         location_ids[field] = parsed
 
+    shipment: ShipmentRequest | None = None
+    shipment_id_raw = payload.get("shipment_request_id")
+    if shipment_id_raw not in (None, ""):
+        try:
+            shipment_id_value = int(shipment_id_raw)
+            if shipment_id_value <= 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            errors["shipment_request_id"] = "شناسه درخواست نامعتبر است."
+        else:
+            shipment = db.session.get(ShipmentRequest, shipment_id_value)
+            if shipment is None:
+                errors["shipment_request_id"] = "شناسه درخواست یافت نشد."
+
     mode_row = None
     mode_id = _parse_required_int(payload, "mode_shipment_mode", "نحوه حمل", errors)
     if mode_id is not None:
@@ -376,45 +390,57 @@ def submit_shipment_request():
         cubic_cm = length_cm * width_cm * height_cm * units
         volume_m3 = round(cubic_cm / 1_000_000, 3)
 
-    shipment = ShipmentRequest(
-        origin_province_id=location_ids.get("origin_province_id"),
-        origin_county_id=location_ids.get("origin_county_id"),
-        origin_city_id=location_ids.get("origin_city_id"),
-        dest_province_id=location_ids.get("dest_province_id"),
-        dest_county_id=location_ids.get("dest_county_id"),
-        dest_city_id=location_ids.get("dest_city_id"),
-        mode_shipment_mode=str(mode_row["id"]) if mode_row else None,
-        incoterm_code=(incoterm_row["code"].upper() if incoterm_row else None),
-        is_hazardous=bool(is_hazardous) if is_hazardous is not None else False,
-        is_refrigerated=bool(is_refrigerated) if is_refrigerated is not None else False,
-        commodity_name=commodity_name,
-        hs_code=hs_code_value,
-        package_type=str(package_row["id"]) if package_row else None,
-        units=units,
-        length_cm=length_cm,
-        width_cm=width_cm,
-        height_cm=height_cm,
-        weight_kg=weight_kg,
-        volume_m3=volume_m3,
-        ready_date=ready_date_value,
-        contact_name=contact_name,
-        contact_phone=contact_phone,
-        contact_email=contact_email,
-        note_text=note_text,
-        status_request_status="NEW",
+    is_new = shipment is None
+    if shipment is None:
+        shipment = ShipmentRequest(status_request_status="NEW")
+
+    shipment.origin_province_id = location_ids.get("origin_province_id")
+    shipment.origin_county_id = location_ids.get("origin_county_id")
+    shipment.origin_city_id = location_ids.get("origin_city_id")
+    shipment.dest_province_id = location_ids.get("dest_province_id")
+    shipment.dest_county_id = location_ids.get("dest_county_id")
+    shipment.dest_city_id = location_ids.get("dest_city_id")
+    shipment.mode_shipment_mode = str(mode_row["id"]) if mode_row else None
+    shipment.incoterm_code = (
+        incoterm_row["code"].upper() if incoterm_row else None
     )
-    shipment.set_sla_due()
-    db.session.add(shipment)
+    shipment.is_hazardous = bool(is_hazardous) if is_hazardous is not None else False
+    shipment.is_refrigerated = (
+        bool(is_refrigerated) if is_refrigerated is not None else False
+    )
+    shipment.commodity_name = commodity_name
+    shipment.hs_code = hs_code_value
+    shipment.package_type = str(package_row["id"]) if package_row else None
+    shipment.units = units
+    shipment.length_cm = length_cm
+    shipment.width_cm = width_cm
+    shipment.height_cm = height_cm
+    shipment.weight_kg = weight_kg
+    shipment.volume_m3 = volume_m3
+    shipment.ready_date = ready_date_value
+    shipment.contact_name = contact_name
+    shipment.contact_phone = contact_phone
+    shipment.contact_email = contact_email
+    shipment.note_text = note_text
+
+    if is_new:
+        shipment.set_sla_due()
+        db.session.add(shipment)
+    elif shipment.sla_due_at is None:
+        shipment.set_sla_due()
+
     db.session.commit()
 
     current_app.logger.info(
-        "Shipment request created (id=%s, mode=%s, package=%s)",
+        "Shipment request %s (id=%s, mode=%s, package=%s)",
+        "created" if is_new else "updated",
         shipment.id,
         mode_row.get("code") if mode_row else None,
         package_row.get("code") if package_row else None,
     )
 
     sla_hours = current_app.config.get("SLA_HOURS")
+    status_code = 201 if is_new else 200
     return (
         jsonify(
             {
@@ -423,7 +449,7 @@ def submit_shipment_request():
                 "sla_hours": int(sla_hours) if sla_hours is not None else None,
             }
         ),
-        201,
+        status_code,
     )
 
 
